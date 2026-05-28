@@ -1,0 +1,55 @@
+name: societypay
+description: Apartment Expenditure Maintenance App
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.12.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Firebase
+  firebase_core: ^3.13.0
+  firebase_auth: ^5.5.0
+  cloud_firestore: ^5.6.0
+  firebase_messaging: ^15.2.5
+
+  # State Management
+  flutter_riverpod: ^2.6.1
+
+  # Navigation
+  go_router: ^14.8.1
+
+  # Charts
+  fl_chart: ^0.70.2
+
+  # PDF Export
+  pdf: ^3.11.3
+  printing: ^5.14.2
+
+  # Excel Export
+  excel: ^4.0.6
+
+  # Utilities
+  intl: ^0.20.2
+  shared_preferences: ^2.5.5
+  flutter_secure_storage: ^9.2.4
+  http: ^1.4.0
+  uuid: ^4.5.1
+  path_provider: ^2.1.5
+  share_plus: ^10.1.4
+  url_launcher: ^6.3.2
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "610941851540",
+    "project_id": "societypay-2018",
+    "storage_bucket": "societypay-2018.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:610941851540:android:bf763318059a847133a181",
+        "android_client_info": {
+          "package_name": "com.venuallam.societypay"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAiXgUbpMa1bNDm_2e-TUlTlOs6rS-3BuI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
