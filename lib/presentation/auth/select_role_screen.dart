@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/constants/app_constants.dart';
 import '../../data/models/society_model.dart';
 import '../../data/models/user_model.dart';
@@ -131,7 +132,23 @@ class SelectRoleScreen extends StatelessWidget {
                     'Your role cannot be changed after approval.',
                     style: AppText.small,
                     textAlign: TextAlign.center),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
+                // Wrong society? Logout
+                TextButton.icon(
+                  onPressed: () async {
+                    await FirebaseAuth.instance.signOut();
+                  },
+                  icon: const Icon(
+                      Icons.logout,
+                      size: 14,
+                      color: AppColors.textMuted),
+                  label: const Text(
+                      'Wrong society? Logout',
+                      style: TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 12)),
+                ),
+                const SizedBox(height: 8),
               ],
             ),
           ),
@@ -189,7 +206,7 @@ class _RoleTile extends StatelessWidget {
                 ...points.map((p) => Padding(
                   padding: const EdgeInsets.only(bottom: 3),
                   child: Row(children: [
-                    const Icon(Icons.check_circle,
+                    const Icon(Icons.check_circle_rounded,
                         color: AppColors.success, size: 14),
                     const SizedBox(width: 6),
                     Text(p, style: const TextStyle(

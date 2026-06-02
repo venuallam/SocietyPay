@@ -127,7 +127,7 @@ class PendingApprovalScreen extends StatelessWidget {
               const SizedBox(height: 12),
 
               // Logout option
-              TextButton(
+              OutlinedButton.icon(
                 onPressed: () async {
                   await FirebaseAuth.instance.signOut();
                   if (context.mounted) {
@@ -140,10 +140,17 @@ class PendingApprovalScreen extends StatelessWidget {
                     );
                   }
                 },
-                child: const Text(
+                icon: const Icon(
+                    Icons.logout,
+                    size: 16,
+                    color: AppColors.danger),
+                label: const Text(
                     'Logout',
                     style: TextStyle(
-                        color: AppColors.textMuted)),
+                        color: AppColors.danger)),
+                style: OutlinedButton.styleFrom(
+                    side: const BorderSide(
+                        color: AppColors.danger)),
               ),
             ],
           ),
@@ -182,7 +189,7 @@ class _StatusStep extends StatelessWidget {
       ],
     )),
     if (done)
-      const Icon(Icons.check_circle,
-          color: AppColors.success, size: 20),
+      const Icon(Icons.check_circle_rounded,
+          color: AppColors.success, size: 22),
   ]);
 }

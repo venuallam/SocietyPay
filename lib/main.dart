@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'firebase_options.dart';
 import 'core/theme/app_theme.dart';
@@ -10,13 +11,46 @@ import 'presentation/auth/invite_code_screen.dart';
 import 'presentation/auth/select_role_screen.dart';
 import 'presentation/auth/pending_approval_screen.dart';
 import 'presentation/dashboard/admin_dashboard_screen.dart';
+import 'presentation/dashboard/resident_dashboard_screen.dart';
 import 'data/models/society_model.dart';
+import 'data/services/notification_service.dart';
+import 'package:flutter_native_splash/flutter_native_splash.dart';
+
+
+// ── Background FCM handler ────────────────────────────────────────────────────
+// Must be a top-level function (not a class method).
+// FCM calls this when a push arrives while the app is
+// terminated or in the background.
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(
+    RemoteMessage message) async {
+  // Firebase is already initialised by the time this
+  // fires in background isolate — nothing extra needed.
+  // The system tray notification is shown automatically
+  // by FCM because the message has a 'notification' payload.
+}
 
 void main() async {
+  WidgetsBinding widgetsBinding =
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Keep splash visible while loading
+  FlutterNativeSplash.preserve(
+      widgetsBinding: widgetsBinding);
+
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // Register background handler before any other FCM call
+  FirebaseMessaging.onBackgroundMessage(
+      _firebaseMessagingBackgroundHandler);
+
+  await notificationService.initialize();
+
+  // Remove splash and show app
+  FlutterNativeSplash.remove();
+
   runApp(const SocietyPayApp());
 }
 
@@ -82,7 +116,6 @@ class LoadingScreen extends StatelessWidget {
 }
 
 // ── Auth Wrapper ──────────────────────────────────────────────────────────────
-// Routes user to correct screen based on their state
 class AuthWrapper extends StatelessWidget {
   const AuthWrapper({super.key});
 
@@ -158,16 +191,17 @@ class _ProfileChecker extends StatelessWidget {
         // ── Approved Member → Resident Dashboard ──────
         // flatId is set only after admin approves
         if (flatId != null &&
-            (role == 'owner' || role == 'tenant')) {
-          return _ApprovedMemberScreen(
-              name:   name,
-              flatId: flatId);
+            (role == 'owner' ||
+                role == 'tenant')) {
+          return ResidentDashboardScreen(
+            userId:    uid,
+            societyId: societyId,
+            flatId:    flatId,
+            name:      name,
+          );
         }
 
         // ── Has societyId but not yet approved ────────
-        // Could be:
-        // a) Submitted request → pending
-        // b) Verified code → not yet submitted role
         return _RequestStatusChecker(
           uid:       uid,
           societyId: societyId,
@@ -201,6 +235,7 @@ class _RequestStatusChecker extends StatelessWidget {
           .doc(societyId)
           .collection('memberRequests')
           .where('userId', isEqualTo: uid)
+          .where('status', isEqualTo: 'pending')
           .limit(1)
           .get(),
       builder: (context, snap) {
@@ -217,14 +252,12 @@ class _RequestStatusChecker extends StatelessWidget {
         }
 
         // No request yet → show role selection
-        // User verified code but hasn't
-        // picked role/flat yet
         if (!snap.hasData ||
             snap.data!.docs.isEmpty) {
           return _SocietyLoader(
-            societyId: societyId,
-            name:      name,
-            phone:     phone,
+            societyId:         societyId,
+            name:              name,
+            phone:             phone,
             showRoleSelection: true,
           );
         }
@@ -237,9 +270,9 @@ class _RequestStatusChecker extends StatelessWidget {
         // Pending → show waiting screen
         if (status == 'pending') {
           return _SocietyLoader(
-            societyId:  societyId,
-            name:       name,
-            phone:      phone,
+            societyId:         societyId,
+            name:              name,
+            phone:             phone,
             flatNumber:
             req['flatNumber'] as String? ?? '',
             role:
@@ -264,7 +297,10 @@ class _RequestStatusChecker extends StatelessWidget {
     FirebaseFirestore.instance
         .collection('users')
         .doc(uid)
-        .update({'societyId': null, 'role': 'pending'});
+        .update({
+      'societyId': null,
+      'role':      'pending',
+    });
   }
 }
 
@@ -281,8 +317,8 @@ class _SocietyLoader extends StatelessWidget {
     required this.societyId,
     required this.name,
     required this.phone,
-    this.flatNumber = '',
-    this.role = 'owner',
+    this.flatNumber        = '',
+    this.role              = 'owner',
     required this.showRoleSelection,
   });
 
@@ -308,16 +344,18 @@ class _SocietyLoader extends StatelessWidget {
 
         final society = SocietyModel(
           id:         societyId,
-          name:       soc['name'] as String? ?? '',
-          totalFlats: soc['totalFlats'] as int? ?? 0,
-          inviteCode:
-          soc['inviteCode'] as String? ?? '',
-          adminId:
-          soc['adminId'] as String? ?? '',
+          name:       soc['name']
+          as String? ?? '',
+          totalFlats: soc['totalFlats']
+          as int? ?? 0,
+          inviteCode: soc['inviteCode']
+          as String? ?? '',
+          adminId:    soc['adminId']
+          as String? ?? '',
           createdAt:  DateTime.now(),
         );
 
-        // Show role selection screen
+        // Show role selection
         if (showRoleSelection) {
           return SelectRoleScreen(
             society:   society,
@@ -362,70 +400,12 @@ class _AdminLoader extends StatelessWidget {
         }
         return AdminDashboardScreen(
           societyId:   societyId,
-          societyName: soc['name'] as String? ?? '',
-          inviteCode:
-          soc['inviteCode'] as String? ?? '',
+          societyName: soc['name']
+          as String? ?? '',
+          inviteCode:  soc['inviteCode']
+          as String? ?? '',
         );
       },
-    );
-  }
-}
-
-// ── Approved Member Screen (temp) ─────────────────────────────────────────────
-class _ApprovedMemberScreen extends StatelessWidget {
-  final String name;
-  final String flatId;
-
-  const _ApprovedMemberScreen({
-    required this.name,
-    required this.flatId,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment:
-            MainAxisAlignment.center,
-            children: [
-              const Text('🏠',
-                  style: TextStyle(fontSize: 60)),
-              const SizedBox(height: 16),
-              const Text('Resident Dashboard',
-                  style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                      color: AppColors.textPrimary)),
-              const SizedBox(height: 8),
-              Text('Welcome back, $name!',
-                  style: const TextStyle(
-                      fontSize: 15,
-                      color: AppColors.textSecondary)),
-              const SizedBox(height: 4),
-              Text('Flat: $flatId',
-                  style: const TextStyle(
-                      fontSize: 12,
-                      color: AppColors.textMuted)),
-              const SizedBox(height: 32),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.danger),
-                  onPressed: () async {
-                    await FirebaseAuth
-                        .instance.signOut();
-                  },
-                  child: const Text('Logout'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 }
@@ -450,16 +430,20 @@ class _ErrorScreen extends StatelessWidget {
             mainAxisAlignment:
             MainAxisAlignment.center,
             children: [
-              const Icon(Icons.error_outline,
-                  color: AppColors.danger, size: 48),
+              const Icon(
+                  Icons.error_outline,
+                  color: AppColors.danger,
+                  size: 48),
               const SizedBox(height: 16),
-              const Text('Something went wrong',
+              const Text(
+                  'Something went wrong',
                   style: TextStyle(
                       fontWeight: FontWeight.w700,
                       fontSize: 18,
                       color: AppColors.textPrimary)),
               const SizedBox(height: 8),
-              Text(message,
+              Text(
+                  message,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                       fontSize: 12,
@@ -469,7 +453,8 @@ class _ErrorScreen extends StatelessWidget {
                 width: double.infinity,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.danger),
+                      backgroundColor:
+                      AppColors.danger),
                   onPressed: () async {
                     await FirebaseAuth
                         .instance.signOut();

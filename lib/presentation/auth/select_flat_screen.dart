@@ -4,6 +4,9 @@ import '../../core/constants/app_constants.dart';
 import '../../data/models/society_model.dart';
 import '../../data/models/user_model.dart';
 import '../../data/repositories/member_repository.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import '../auth/pending_approval_screen.dart';
+import '../../data/repositories/society_repository.dart';
 
 class SelectFlatScreen extends StatefulWidget {
   final SocietyModel society;
@@ -76,9 +79,8 @@ class _SelectFlatScreenState
         role:       widget.role,
       );
 
-      if (mounted) {
-        _showSuccessDialog();
-      }
+      await _showSuccessDialog();
+
     } catch (e) {
       setState(() => _error = e.toString());
     } finally {
@@ -86,66 +88,25 @@ class _SelectFlatScreenState
     }
   }
 
-  void _showSuccessDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20)),
-        title: const Column(children: [
-          Text('🎉', style: TextStyle(fontSize: 48)),
-          SizedBox(height: 8),
-          Text('Request Submitted!',
-              style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.textPrimary)),
-        ]),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                  color: AppColors.successLight,
-                  borderRadius: BorderRadius.circular(12)),
-              child: Column(children: [
-                const Icon(Icons.check_circle,
-                    color: AppColors.success, size: 40),
-                const SizedBox(height: 8),
-                Text(
-                    'Your request to join '
-                        '${widget.society.name} '
-                        'has been submitted.',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                        color: AppColors.textSecondary)),
-              ]),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-                'The admin will review and approve '
-                    'your request. You will be notified '
-                    'once approved.',
-                textAlign: TextAlign.center,
-                style: AppText.small),
-          ],
-        ),
-        actions: [
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: () {
-                // Pop all screens back to login
-                Navigator.of(context)
-                    .popUntil((route) => route.isFirst);
-              },
-              child: const Text('OK, I will wait'),
-            ),
-          ),
-        ],
-      ),
-    );
+  Future<void> _showSuccessDialog() async {
+    // Fetch society name for display
+    final society = await SocietyRepository()
+        .getSociety(widget.society.id);
+
+    if (mounted) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(
+            builder: (_) => PendingApprovalScreen(
+              userName:    widget.userName,
+              societyName: society?.name
+                  ?? widget.society.name,
+              flatNumber:  _selectedFlatNumber ?? '',
+              role:        widget.role.name,
+            )),
+            (route) => false,
+      );
+    }
   }
 
   // Filter flats based on role
@@ -341,9 +302,9 @@ class _SelectFlatScreenState
                       ],
                     )),
                     if (isSelected)
-                      const Icon(Icons.check_circle,
+                      const Icon(Icons.check_circle_rounded,
                           color: AppColors.accent,
-                          size: 24),
+                          size: 26),
                   ]),
                 ),
               );

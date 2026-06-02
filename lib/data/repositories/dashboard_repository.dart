@@ -28,7 +28,7 @@ class DashboardRepository {
           .doc(societyId)
           .get(),
 
-      // Pending expenses
+      // Pending expenses count
       _db.collection('societies')
           .doc(societyId)
           .collection('expenses')
@@ -41,6 +41,14 @@ class DashboardRepository {
           .collection('memberRequests')
           .where('status', isEqualTo: 'pending')
           .get(),
+
+      // Approved expenses for current month
+      _db.collection('societies')
+          .doc(societyId)
+          .collection('expenses')
+          .where('month', isEqualTo: month)
+          .where('status', isEqualTo: 'approved')
+          .get(),
     ]);
 
     final flatsSnap    = results[0] as QuerySnapshot;
@@ -48,6 +56,7 @@ class DashboardRepository {
     final corpusSnap   = results[2] as DocumentSnapshot;
     final expSnap      = results[3] as QuerySnapshot;
     final reqSnap      = results[4] as QuerySnapshot;
+    final approvedExpSnap = results[5] as QuerySnapshot;
 
     // Calculate stats
     final totalFlats   = flatsSnap.docs.length;
@@ -68,17 +77,21 @@ class DashboardRepository {
         ? ((corpusSnap.data() as Map)['currentBalance'] as num).toDouble()
         : 0.0;
 
+    final monthlyApprovedExpenses = approvedExpSnap.docs.fold(0.0,
+        (s, d) => s + ((d.data() as Map)['amount'] as num).toDouble());
+
     return DashboardStats(
-      totalFlats:      totalFlats,
-      paidFlats:       paidBills.length,
-      unpaidFlats:     unpaidBills.length,
-      vacantFlats:     vacantFlats,
-      totalCollected:  collected,
-      totalPending:    pending,
-      corpusBalance:   corpusBalance,
-      pendingExpenses: expSnap.docs.length,
-      pendingRequests: reqSnap.docs.length,
-      month:           month,
+      totalFlats:               totalFlats,
+      paidFlats:                paidBills.length,
+      unpaidFlats:              unpaidBills.length,
+      vacantFlats:              vacantFlats,
+      totalCollected:           collected,
+      totalPending:             pending,
+      corpusBalance:            corpusBalance,
+      pendingExpenses:          expSnap.docs.length,
+      pendingRequests:          reqSnap.docs.length,
+      month:                    month,
+      monthlyApprovedExpenses:  monthlyApprovedExpenses,
     );
   }
 }

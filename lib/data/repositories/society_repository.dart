@@ -14,11 +14,15 @@ class SocietyRepository {
   }
 
   // ── Create Society ──────────────────────────────────────────────────────────
+  // flats: list of {flatNumber: String, typeName: String}
+  // The repository resolves typeName → flatTypeId using the
+  // flat type docs it creates in the same batch.
   Future<SocietyModel> createSociety({
     required String adminId,
     required String name,
-    required int totalFlats,
+    required String address,
     required List<FlatTypeModel> flatTypes,
+    required List<Map<String, dynamic>> flats,
   }) async {
     final batch      = _db.batch();
     final societyRef = _db.collection('societies').doc();
@@ -29,36 +33,47 @@ class SocietyRepository {
     final society = SocietyModel(
       id:         societyRef.id,
       name:       name,
-      totalFlats: totalFlats,
+      totalFlats: flats.length,
       inviteCode: inviteCode,
       adminId:    adminId,
+      address:    address.isEmpty ? null : address,
       createdAt:  now,
     );
     batch.set(societyRef, society.toMap());
 
-    // 2. Create flat type documents
+    // 2. Create flat type docs — build name→id map
+    final typeNameToId   = <String, String>{};
+    final typeNameToModel = <String, FlatTypeModel>{};
+
     for (final ft in flatTypes) {
       final ftRef = societyRef
           .collection('flatTypes').doc();
       batch.set(ftRef, ft.toMap());
+      typeNameToId[ft.typeName]    = ftRef.id;
+      typeNameToModel[ft.typeName] = ft;
     }
 
-    // 3. Create flat documents (all vacant)
-    for (int i = 1; i <= totalFlats; i++) {
-      final flatRef = societyRef
+    // 3. Create flat documents using pre-built flat list
+    for (final flat in flats) {
+      final flatRef  = societyRef
           .collection('flats').doc();
+      final typeName = flat['typeName'] as String;
+      final typeId   = typeNameToId[typeName]
+          ?? typeNameToId.values.first;
+
       batch.set(flatRef, {
-        'flatNumber':          'Flat-$i',
-        'flatTypeId':          flatTypes.first.id,
-        'status':              'vacant',
-        'ownerId':             null,
-        'tenantId':            null,
-        'billingResponsibleId':null,
-        'billingRole':         'vacant',
+        'flatNumber':           flat['flatNumber'],
+        'flatTypeId':           typeId,
+        'flatTypeName':         typeName,
+        'status':               'vacant',
+        'ownerId':              null,
+        'tenantId':             null,
+        'billingResponsibleId': null,
+        'billingRole':          'vacant',
       });
     }
 
-    // 4. Create corpus document
+    // 4. Create corpus document (zeroed out)
     batch.set(
       _db.collection('corpus').doc(societyRef.id),
       {
@@ -72,12 +87,12 @@ class SocietyRepository {
       },
     );
 
-    // 5. Add default emergency contacts
+    // 5. Default emergency contacts
     final defaultContacts = [
-      {'name': 'Police',       'phone': '100',  'category': 'emergency'},
-      {'name': 'Fire Brigade', 'phone': '101',  'category': 'emergency'},
-      {'name': 'Ambulance',    'phone': '102',  'category': 'emergency'},
-      {'name': 'Gas Emergency','phone': '1906', 'category': 'emergency'},
+      {'name': 'Police',        'phone': '100',  'category': 'emergency'},
+      {'name': 'Fire Brigade',  'phone': '101',  'category': 'emergency'},
+      {'name': 'Ambulance',     'phone': '102',  'category': 'emergency'},
+      {'name': 'Gas Emergency', 'phone': '1906', 'category': 'emergency'},
     ];
     for (final contact in defaultContacts) {
       final cRef = societyRef.collection('contacts').doc();
@@ -89,7 +104,7 @@ class SocietyRepository {
       });
     }
 
-    // 6. Update user with societyId and admin role
+    // 6. Set admin user profile
     batch.set(
       _db.collection('users').doc(adminId),
       {
@@ -97,20 +112,20 @@ class SocietyRepository {
         'role':      'admin',
         'createdAt': Timestamp.now(),
       },
-      SetOptions(merge: true),   // ← merge: true creates if not exists
+      SetOptions(merge: true),
     );
 
-    // Commit all at once
     await batch.commit();
-
     return society;
   }
 
   // ── Get Society by Invite Code ──────────────────────────────────────────────
-  Future<SocietyModel?> getSocietyByInviteCode(String code) async {
+  Future<SocietyModel?> getSocietyByInviteCode(
+      String code) async {
     final query = await _db
         .collection('societies')
-        .where('inviteCode', isEqualTo: code.toUpperCase())
+        .where('inviteCode',
+        isEqualTo: code.toUpperCase())
         .limit(1)
         .get();
     if (query.docs.isEmpty) return null;
@@ -118,7 +133,8 @@ class SocietyRepository {
   }
 
   // ── Get Society ─────────────────────────────────────────────────────────────
-  Future<SocietyModel?> getSociety(String societyId) async {
+  Future<SocietyModel?> getSociety(
+      String societyId) async {
     final doc = await _db
         .collection('societies')
         .doc(societyId)

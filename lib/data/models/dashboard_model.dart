@@ -9,6 +9,7 @@ class DashboardStats {
   final int pendingExpenses;
   final int pendingRequests;
   final String month;
+  final double monthlyApprovedExpenses;
 
   const DashboardStats({
     required this.totalFlats,
@@ -21,8 +22,12 @@ class DashboardStats {
     required this.pendingExpenses,
     required this.pendingRequests,
     required this.month,
+    this.monthlyApprovedExpenses = 0,
   });
 
   double get collectionPercentage =>
       totalFlats > 0 ? (paidFlats / totalFlats) * 100 : 0;
+
+  double get monthlyNet =>
+      totalCollected - monthlyApprovedExpenses;
 }

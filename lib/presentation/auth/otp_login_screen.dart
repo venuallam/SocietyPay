@@ -140,7 +140,19 @@ class _OtpLoginScreenState extends State<OtpLoginScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('📱', style: TextStyle(fontSize: 40)),
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Icon(
+                    Icons.phone_android_rounded,
+                    color: Colors.white,
+                    size: 36,
+                  ),
+                ),
                 const SizedBox(height: 16),
                 Text(
                   _otpSent ? 'Enter OTP' : 'Verify Your Number',
