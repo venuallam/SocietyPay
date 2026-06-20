@@ -1,5 +1,6 @@
-import 'dart:io';
+import 'dart:io' show File;
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -7,6 +8,9 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:excel/excel.dart' hide Border;
 import '../../core/constants/app_constants.dart';
+import '../../core/utils/file_download.dart';
+import '../../core/ads/interstitial_ad_manager.dart';
+import '../../core/ads/banner_ad_widget.dart';
 import '../../data/models/bill_model.dart';
 import '../../data/models/expense_model.dart';
 import '../../data/repositories/reports_repository.dart';
@@ -34,12 +38,20 @@ class _ReportsScreenState
   bool _exporting   = false;
   Map<String, dynamic>? _data;
   String? _error;
+  final _interstitial = InterstitialAdManager();
 
   @override
   void initState() {
     super.initState();
     _selectedMonth = _currentMonth();
     _loadData();
+    _interstitial.load();
+  }
+
+  @override
+  void dispose() {
+    _interstitial.dispose();
+    super.dispose();
   }
 
   String _currentMonth() {
@@ -87,7 +99,7 @@ class _ReportsScreenState
       NumberFormat('#,##0').format(v);
 
   // ── Generate PDF ────────────────────────────────
-  Future<File> _generatePDF() async {
+  Future<File?> _generatePDF() async {
     final d        = _data!;
     final pdf      = pw.Document();
     final bills    = d['bills'] as List<BillModel>;
@@ -327,13 +339,23 @@ class _ReportsScreenState
       ],
     ));
 
-    final dir  =
-    await getApplicationDocumentsDirectory();
-    final path =
-        '${dir.path}/societypay_report'
+    final bytes = await pdf.save();
+
+    if (kIsWeb) {
+      // Web: trigger browser download directly
+      triggerWebDownload(
+        'societypay_report_$_selectedMonth.pdf',
+        bytes,
+        'application/pdf',
+      );
+      return null;
+    }
+
+    final dir  = await getApplicationDocumentsDirectory();
+    final path = '${dir.path}/societypay_report'
         '_${_selectedMonth}.pdf';
     final file = File(path);
-    await file.writeAsBytes(await pdf.save());
+    await file.writeAsBytes(bytes);
     return file;
   }
 
@@ -383,7 +405,7 @@ class _ReportsScreenState
       );
 
   // ── Generate Excel ──────────────────────────────
-  Future<File> _generateExcel() async {
+  Future<File?> _generateExcel() async {
     final d        = _data!;
     final bills    = d['bills'] as List<BillModel>;
     final expenses =
@@ -478,32 +500,56 @@ class _ReportsScreenState
       ]);
     }
 
-    final dir  =
-    await getApplicationDocumentsDirectory();
-    final path =
-        '${dir.path}/societypay_report'
+    final bytes = excel.encode()!;
+
+    if (kIsWeb) {
+      // Web: trigger browser download directly
+      triggerWebDownload(
+        'societypay_report_$_selectedMonth.xlsx',
+        bytes,
+        'application/vnd.openxmlformats-officedocument'
+            '.spreadsheetml.sheet',
+      );
+      return null;
+    }
+
+    final dir  = await getApplicationDocumentsDirectory();
+    final path = '${dir.path}/societypay_report'
         '_${_selectedMonth}.xlsx';
     final file = File(path);
-    await file.writeAsBytes(excel.encode()!);
+    await file.writeAsBytes(bytes);
     return file;
   }
 
   Future<void> _export(String format) async {
     setState(() => _exporting = true);
     try {
-      File file;
+      // On web: generate* triggers browser download
+      // and returns null — no share step needed.
+      final File? file;
       if (format == 'pdf') {
         file = await _generatePDF();
       } else {
         file = await _generateExcel();
       }
 
-      await Share.shareXFiles(
-        [XFile(file.path)],
-        text:
-        'SocietyPay Report — '
-            '$_selectedMonth',
-      );
+      if (!kIsWeb && file != null) {
+        await Share.shareXFiles(
+          [XFile(file.path)],
+          text: 'SocietyPay Report — $_selectedMonth',
+        );
+        // Show an interstitial after the report is shared
+        _interstitial.showThen(() {});
+      }
+
+      if (mounted && kIsWeb) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(
+            content: Text(
+                '✅ Download started'),
+            backgroundColor:
+            AppColors.success));
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -522,6 +568,7 @@ class _ReportsScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      bottomNavigationBar: const BannerAdWidget(),
       appBar: AppBar(
         title: const Text('Reports'),
         backgroundColor: AppColors.primary,

@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/corpus_model.dart';
+import '../services/notification_service.dart';
 
 class CorpusRepository {
   final _db = FirebaseFirestore.instance;
@@ -404,5 +405,42 @@ class CorpusRepository {
     }
 
     await batch.commit();
+
+    // ── Post-closing notifications to admin ──────────
+
+    // 1. Month-end closed successfully
+    if (isCredit) {
+      notificationService.notifyUser(
+        userId: adminId,
+        title:  '🏦 Month-End Closed — $month',
+        body:   'Surplus of ₹${surplus.toStringAsFixed(0)} '
+                'added to Corpus Fund. '
+                'New balance: ₹${newBalance.toStringAsFixed(0)}.',
+        type:   'monthEndSurplus',
+      ).catchError((_) {});
+    } else {
+      // 2. Deficit warning
+      notificationService.notifyUser(
+        userId: adminId,
+        title:  '⚠️ Corpus Deficit — $month',
+        body:   'Expenses exceeded collections by '
+                '₹${surplus.abs().toStringAsFixed(0)}. '
+                'Deficit deducted from corpus.',
+        type:   'corpusDeficit',
+      ).catchError((_) {});
+    }
+
+    // 3. Below minimum reserve warning
+    if (minReserve > 0 && newBalance < minReserve) {
+      notificationService.notifyUser(
+        userId: adminId,
+        title:  '🔴 Corpus Below Reserve',
+        body:   'Corpus balance (₹${newBalance.toStringAsFixed(0)}) '
+                'is below the minimum reserve '
+                '(₹${minReserve.toStringAsFixed(0)}). '
+                'Please review society finances.',
+        type:   'corpusBelowReserve',
+      ).catchError((_) {});
+    }
   }
 }

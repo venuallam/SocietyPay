@@ -61,7 +61,9 @@ class FlatModel {
   final String flatTypeId;
   final FlatStatus status;
   final String? ownerId;
+  final String? ownerName;
   final String? tenantId;
+  final String? tenantName;
   final String? billingResponsibleId;
 
   const FlatModel({
@@ -70,7 +72,9 @@ class FlatModel {
     required this.flatTypeId,
     required this.status,
     this.ownerId,
+    this.ownerName,
     this.tenantId,
+    this.tenantName,
     this.billingResponsibleId,
   });
 
@@ -83,7 +87,9 @@ class FlatModel {
       status:      d['status'] == 'occupied'
           ? FlatStatus.occupied : FlatStatus.vacant,
       ownerId:     d['ownerId'],
+      ownerName:   d['ownerName'],
       tenantId:    d['tenantId'],
+      tenantName:  d['tenantName'],
       billingResponsibleId: d['billingResponsibleId'],
     );
   }
@@ -92,6 +98,10 @@ class FlatModel {
   bool get isOccupied => status == FlatStatus.occupied;
   bool get hasOwner   => ownerId != null;
   bool get hasTenant  => tenantId != null;
+
+  // Display name: owner if present, else tenant
+  String? get residentName =>
+      ownerName ?? tenantName;
 }
 
 class MemberRequestModel {

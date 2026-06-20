@@ -59,6 +59,7 @@ class ExpenseModel {
   final String? approvedBy;
   final String? rejectionReason;
   final String? linkedCorpusTxnId;
+  final String? receiptLink;
   final DateTime createdAt;
 
   const ExpenseModel({
@@ -75,6 +76,7 @@ class ExpenseModel {
     this.approvedBy,
     this.rejectionReason,
     this.linkedCorpusTxnId,
+    this.receiptLink,
     required this.createdAt,
   });
 
@@ -99,6 +101,7 @@ class ExpenseModel {
       approvedBy:  d['approvedBy'],
       rejectionReason: d['rejectionReason'],
       linkedCorpusTxnId: d['linkedCorpusTxnId'],
+      receiptLink: d['receiptLink'],
       createdAt: d['createdAt'] != null
           ? (d['createdAt'] as Timestamp).toDate()
           : DateTime.now(),
@@ -118,6 +121,7 @@ class ExpenseModel {
     'approvedBy':        approvedBy,
     'rejectionReason':   rejectionReason,
     'linkedCorpusTxnId': linkedCorpusTxnId,
+    'receiptLink':       receiptLink,
     'createdAt':         Timestamp.fromDate(createdAt),
   };
 

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'firebase_options.dart';
+import 'core/ads/ad_helper.dart';
 import 'core/theme/app_theme.dart';
 import 'core/constants/app_constants.dart';
 import 'presentation/auth/otp_login_screen.dart';
@@ -34,22 +37,30 @@ void main() async {
   WidgetsBinding widgetsBinding =
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Keep splash visible while loading
-  FlutterNativeSplash.preserve(
-      widgetsBinding: widgetsBinding);
+  // Native splash not applicable on web
+  if (!kIsWeb) {
+    FlutterNativeSplash.preserve(
+        widgetsBinding: widgetsBinding);
+  }
 
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // Register background handler before any other FCM call
-  FirebaseMessaging.onBackgroundMessage(
-      _firebaseMessagingBackgroundHandler);
+  // FCM not supported on web — skip entirely
+  if (!kIsWeb) {
+    FirebaseMessaging.onBackgroundMessage(
+        _firebaseMessagingBackgroundHandler);
+    await notificationService.initialize();
+  }
 
-  await notificationService.initialize();
+  // Initialize AdMob (Android only)
+  if (AdHelper.adsSupported) {
+    await MobileAds.instance.initialize();
+  }
 
-  // Remove splash and show app
-  FlutterNativeSplash.remove();
+  // Remove splash (mobile only)
+  if (!kIsWeb) FlutterNativeSplash.remove();
 
   runApp(const SocietyPayApp());
 }
@@ -63,7 +74,50 @@ class SocietyPayApp extends StatelessWidget {
       title: 'SocietyPay',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
+      builder: kIsWeb
+          ? (context, child) => _WebFrame(child: child!)
+          : null,
       home: const AuthWrapper(),
+    );
+  }
+}
+
+// ── Web Frame ─────────────────────────────────────────────────────────────────
+// On desktop browsers the app is shown in a centred mobile-width
+// column so it looks and feels like a native app, not a stretched
+// web page.
+class _WebFrame extends StatelessWidget {
+  final Widget child;
+  const _WebFrame({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final screenWidth =
+        MediaQuery.of(context).size.width;
+
+    // On actual mobile / narrow browser → full width
+    if (screenWidth <= 480) return child;
+
+    // On desktop / tablet → centred phone column
+    return Container(
+      color: const Color(0xFFE8EDF4),
+      child: Center(
+        child: Container(
+          width: 430,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black
+                    .withOpacity(0.12),
+                blurRadius: 24,
+                spreadRadius: 4,
+              ),
+            ],
+          ),
+          child: ClipRect(child: child),
+        ),
+      ),
     );
   }
 }

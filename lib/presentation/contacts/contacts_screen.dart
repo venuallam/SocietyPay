@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/constants/app_constants.dart';
 import '../../data/models/contact_model.dart';
 import '../../data/models/user_model.dart';
 import '../../data/repositories/contact_repository.dart';
+import '../../core/ads/banner_ad_widget.dart';
 import 'add_contact_screen.dart';
 import 'contact_suggestions_screen.dart';
 
@@ -43,6 +45,7 @@ class _ContactsScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      bottomNavigationBar: const BannerAdWidget(),
       appBar: AppBar(
         title: const Text('Contacts'),
         backgroundColor: AppColors.primary,
@@ -323,6 +326,11 @@ class _ContactTile extends StatelessWidget {
   });
 
   Future<void> _call(BuildContext ctx) async {
+    // No dialer on web — copy instead
+    if (kIsWeb) {
+      _copyNumber(ctx);
+      return;
+    }
     final uri =
     Uri.parse('tel:${contact.phone}');
     if (await canLaunchUrl(uri)) {
@@ -392,11 +400,6 @@ class _ContactTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final catColor = switch (contact.category) {
-      ContactCategory.emergency => AppColors.danger,
-      ContactCategory.repairs   => AppColors.primary,
-      ContactCategory.nearby    => AppColors.success,
-    };
     final catBg = switch (contact.category) {
       ContactCategory.emergency =>
       AppColors.dangerLight,
@@ -406,147 +409,156 @@ class _ContactTile extends StatelessWidget {
       AppColors.successLight,
     };
 
+    // Admin gets a three-dot menu for low-priority actions
+    final showMenu = isAdmin;
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(
+          horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(
               color: AppColors.border)),
       child: Row(children: [
 
-        // Category icon
+        // Compact category icon
         Container(
-          width: 50, height: 50,
+          width: 40, height: 40,
           decoration: BoxDecoration(
               color: catBg,
               borderRadius:
-              BorderRadius.circular(14)),
+              BorderRadius.circular(10)),
           child: Center(child: Text(
               contact.categoryIcon,
               style: const TextStyle(
-                  fontSize: 24))),
+                  fontSize: 20))),
         ),
         const SizedBox(width: 12),
 
-        // Details
+        // Name + phone (category is shown by the
+        // section header, so no per-tile chip)
         Expanded(child: Column(
           crossAxisAlignment:
           CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(contact.name,
-                style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary)),
-            const SizedBox(height: 3),
-            Text(contact.phone,
-                style: const TextStyle(
-                    fontSize: 13,
-                    color: AppColors.textSecondary,
-                    fontFamily: 'monospace')),
-            const SizedBox(height: 4),
             Row(children: [
-              Container(
-                  padding:
-                  const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                      color: catBg,
-                      borderRadius:
-                      BorderRadius.circular(20)),
-                  child: Text(
-                      contact.categoryLabel,
-                      style: TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
-                          color: catColor))),
+              Flexible(
+                child: Text(contact.name,
+                    maxLines: 1,
+                    overflow:
+                    TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color:
+                        AppColors.textPrimary)),
+              ),
               if (contact.isDefault) ...[
                 const SizedBox(width: 6),
-                Container(
-                    padding:
-                    const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2),
-                    decoration: BoxDecoration(
-                        color: AppColors.bgLight,
-                        borderRadius:
-                        BorderRadius.circular(20)),
-                    child: const Text('DEFAULT',
-                        style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.textMuted))),
+                const Icon(Icons.lock_outline,
+                    size: 11,
+                    color: AppColors.textMuted),
               ],
             ]),
+            const SizedBox(height: 2),
+            Text(contact.phone,
+                style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                    fontFamily: 'monospace')),
           ],
         )),
 
-        // Call + Copy buttons
-        Column(children: [
-          GestureDetector(
-              onTap: () => _call(context),
-              child: Container(
-                  width: 40, height: 40,
-                  decoration: BoxDecoration(
-                      color: AppColors.successLight,
-                      borderRadius:
-                      BorderRadius.circular(10)),
-                  child: const Icon(
-                      Icons.call,
-                      color: AppColors.success,
-                      size: 20))),
-          const SizedBox(height: 6),
-          GestureDetector(
-              onTap: () => _copyNumber(context),
-              child: Container(
-                  width: 40, height: 40,
-                  decoration: BoxDecoration(
-                      color: AppColors.bgLight,
-                      borderRadius:
-                      BorderRadius.circular(10)),
-                  child: const Icon(
-                      Icons.copy,
-                      color: AppColors.textSecondary,
-                      size: 18))),
-        ]),
+        // ── Inline actions (same row) ──────────
+        // Call — hidden on web (no dialer)
+        if (!kIsWeb)
+          _ActionIcon(
+            icon:  Icons.call,
+            color: AppColors.success,
+            bg:    AppColors.successLight,
+            onTap: () => _call(context),
+          ),
+        if (!kIsWeb) const SizedBox(width: 6),
 
-        // Admin edit + delete buttons
-        if (isAdmin) ...[
-          const SizedBox(width: 6),
-          Column(children: [
-            GestureDetector(
-                onTap: () => _edit(context),
-                child: Container(
-                    width: 40, height: 40,
-                    decoration: BoxDecoration(
-                        color: AppColors.accentLight,
-                        borderRadius:
-                        BorderRadius.circular(10)),
-                    child: const Icon(
-                        Icons.edit_outlined,
-                        color: AppColors.accent,
-                        size: 18))),
-            const SizedBox(height: 6),
-            if (!contact.isDefault)
-              GestureDetector(
-                  onTap: () => _delete(context),
-                  child: Container(
-                      width: 40, height: 40,
-                      decoration: BoxDecoration(
-                          color: AppColors.dangerLight,
-                          borderRadius:
-                          BorderRadius.circular(10)),
-                      child: const Icon(
-                          Icons.delete_outline,
-                          color: AppColors.danger,
-                          size: 18))),
-          ]),
-        ],
+        // Copy — always available
+        _ActionIcon(
+          icon:  Icons.copy,
+          color: AppColors.textSecondary,
+          bg:    AppColors.bgLight,
+          onTap: () => _copyNumber(context),
+        ),
+
+        // Three-dot menu for admin (edit / delete)
+        if (showMenu)
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert,
+                size: 20,
+                color: AppColors.textMuted),
+            padding: EdgeInsets.zero,
+            onSelected: (v) {
+              if (v == 'edit') _edit(context);
+              if (v == 'delete') _delete(context);
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(
+                value: 'edit',
+                child: Row(children: [
+                  Icon(Icons.edit_outlined,
+                      size: 18,
+                      color: AppColors.accent),
+                  SizedBox(width: 10),
+                  Text('Edit'),
+                ]),
+              ),
+              if (!contact.isDefault)
+                const PopupMenuItem(
+                  value: 'delete',
+                  child: Row(children: [
+                    Icon(Icons.delete_outline,
+                        size: 18,
+                        color: AppColors.danger),
+                    SizedBox(width: 10),
+                    Text('Delete',
+                        style: TextStyle(
+                            color:
+                            AppColors.danger)),
+                  ]),
+                ),
+            ],
+          ),
       ]),
     );
   }
+}
+
+// ── Small inline action icon button ───────────────────────────────────────────
+class _ActionIcon extends StatelessWidget {
+  final IconData icon;
+  final Color color, bg;
+  final VoidCallback onTap;
+  const _ActionIcon({
+    required this.icon,
+    required this.color,
+    required this.bg,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) =>
+      GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 36, height: 36,
+          decoration: BoxDecoration(
+              color: bg,
+              borderRadius:
+              BorderRadius.circular(9)),
+          child: Icon(icon, color: color, size: 18),
+        ),
+      );
 }
 
 // ── Category Header ───────────────────────────────────────────────────────────

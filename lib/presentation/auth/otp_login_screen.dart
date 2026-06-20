@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/constants/app_constants.dart';
 import '../../main.dart';
@@ -20,7 +21,10 @@ class _OtpLoginScreenState extends State<OtpLoginScreen> {
   bool   _otpSent      = false;
   bool   _loading      = false;
   String? _error;
+  // Mobile
   String? _verificationId;
+  // Web — stores ConfirmationResult from signInWithPhoneNumber
+  ConfirmationResult? _webConfirmation;
   int    _resendSeconds = 60;
 
   @override
@@ -34,11 +38,46 @@ class _OtpLoginScreenState extends State<OtpLoginScreen> {
   Future<void> _sendOtp() async {
     final phone = _phoneCtrl.text.trim();
     if (phone.length != 10) {
-      setState(() => _error = 'Enter a valid 10-digit mobile number');
+      setState(() =>
+      _error = 'Enter a valid 10-digit mobile number');
       return;
     }
     setState(() { _loading = true; _error = null; });
 
+    if (kIsWeb) {
+      await _sendOtpWeb(phone);
+    } else {
+      await _sendOtpMobile(phone);
+    }
+  }
+
+  // ── Web OTP flow — reCAPTCHA + ConfirmationResult ─────────────────────────
+  Future<void> _sendOtpWeb(String phone) async {
+    try {
+      _webConfirmation = await _auth
+          .signInWithPhoneNumber('+91$phone');
+      setState(() {
+        _otpSent       = true;
+        _loading       = false;
+        _resendSeconds = 60;
+      });
+      _startResendTimer();
+    } on FirebaseAuthException catch (e) {
+      setState(() {
+        _loading = false;
+        _error   = e.message ?? 'Verification failed';
+      });
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _error   = 'Could not send OTP. '
+            'Please try again.';
+      });
+    }
+  }
+
+  // ── Mobile OTP flow — silent push verification ─────────────────────────────
+  Future<void> _sendOtpMobile(String phone) async {
     await _auth.verifyPhoneNumber(
       phoneNumber: '+91$phone',
       timeout: const Duration(seconds: 60),
@@ -75,6 +114,33 @@ class _OtpLoginScreenState extends State<OtpLoginScreen> {
     }
     setState(() { _loading = true; _error = null; });
 
+    if (kIsWeb) {
+      await _verifyOtpWeb(otp);
+    } else {
+      await _verifyOtpMobile(otp);
+    }
+  }
+
+  Future<void> _verifyOtpWeb(String otp) async {
+    try {
+      await _webConfirmation!.confirm(otp);
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(
+              builder: (_) => const AuthWrapper()),
+              (route) => false,
+        );
+      }
+    } on FirebaseAuthException catch (e) {
+      setState(() {
+        _loading = false;
+        _error   = e.message ?? 'Invalid OTP';
+      });
+    }
+  }
+
+  Future<void> _verifyOtpMobile(String otp) async {
     try {
       final credential = PhoneAuthProvider.credential(
         verificationId: _verificationId!,

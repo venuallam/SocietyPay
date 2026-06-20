@@ -25,13 +25,13 @@ class AddExpenseScreen extends StatefulWidget {
 
 class _AddExpenseScreenState
     extends State<AddExpenseScreen> {
-  final _descCtrl   = TextEditingController();
-  final _amountCtrl = TextEditingController();
-  final _repo       = ExpenseRepository();
+  final _descCtrl    = TextEditingController();
+  final _amountCtrl  = TextEditingController();
+  final _receiptCtrl = TextEditingController();
+  final _repo        = ExpenseRepository();
 
   ExpenseCategory _category =
       ExpenseCategory.society;
-  bool _isCorpus = false;
   bool _loading  = false;
   String? _error;
 
@@ -42,6 +42,7 @@ class _AddExpenseScreenState
   void dispose() {
     _descCtrl.dispose();
     _amountCtrl.dispose();
+    _receiptCtrl.dispose();
     super.dispose();
   }
 
@@ -49,6 +50,7 @@ class _AddExpenseScreenState
     final desc   = _descCtrl.text.trim();
     final amount =
     double.tryParse(_amountCtrl.text.trim());
+    final receipt = _receiptCtrl.text.trim();
 
     if (desc.isEmpty) {
       setState(() =>
@@ -59,6 +61,46 @@ class _AddExpenseScreenState
       setState(() =>
       _error = 'Please enter a valid amount');
       return;
+    }
+
+    // Warn if no receipt link attached
+    if (receipt.isEmpty) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(
+              borderRadius:
+              BorderRadius.circular(16)),
+          title: const Row(children: [
+            Text('⚠️ ',
+                style: TextStyle(fontSize: 20)),
+            Expanded(child: Text('No Receipt',
+                style: TextStyle(
+                    fontWeight:
+                    FontWeight.w800,
+                    fontSize: 17))),
+          ]),
+          content: const Text(
+              'You haven\'t attached a receipt '
+              'link. Adding one (Google Drive / '
+              'Photos link) keeps records '
+              'transparent.\n\nSubmit without '
+              'a receipt?'),
+          actions: [
+            TextButton(
+                onPressed: () =>
+                    Navigator.pop(ctx, false),
+                child: const Text(
+                    'Add Receipt')),
+            ElevatedButton(
+                onPressed: () =>
+                    Navigator.pop(ctx, true),
+                child: const Text(
+                    'Submit Anyway')),
+          ],
+        ),
+      );
+      if (proceed != true) return;
     }
 
     setState(() {
@@ -75,7 +117,9 @@ class _AddExpenseScreenState
           category:          _category,
           description:       desc,
           amount:            amount,
-          isCorpusDeduction: _isCorpus,
+          isCorpusDeduction: false,
+          receiptLink:       receipt.isEmpty
+              ? null : receipt,
         );
       } else {
         await _repo.submitExpenseRequest(
@@ -85,7 +129,9 @@ class _AddExpenseScreenState
           category:          _category,
           description:       desc,
           amount:            amount,
-          isCorpusDeduction: _isCorpus,
+          isCorpusDeduction: false,
+          receiptLink:       receipt.isEmpty
+              ? null : receipt,
         );
       }
 
@@ -222,59 +268,28 @@ class _AddExpenseScreenState
             ),
             const SizedBox(height: 16),
 
-            // ── Corpus toggle ──────────────────────────
-            Container(
-              decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius:
-                  BorderRadius.circular(12),
-                  border: Border.all(
-                      color: _isCorpus
-                          ? AppColors.danger
-                          : AppColors.border)),
-              child: SwitchListTile(
-                title: Text(
-                    _isAdmin
-                        ? 'Deduct from Corpus Fund'
-                        : 'Request from Corpus Fund',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14)),
-                subtitle: Text(
-                    _isAdmin
-                        ? 'Use for capital / infrastructure expenses'
-                        : 'Request admin pay this from society corpus',
-                    style: const TextStyle(
-                        fontSize: 11)),
-                value: _isCorpus,
-                activeColor: AppColors.danger,
-                onChanged: (v) =>
-                    setState(() => _isCorpus = v),
+            // ── Receipt link (optional) ───────────────
+            const Text('RECEIPT LINK (OPTIONAL)',
+                style: AppText.label),
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: _receiptCtrl,
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(
+                hintText:
+                'Paste Google Drive / Photos link',
+                prefixIcon:
+                Icon(Icons.link, size: 20),
               ),
             ),
-            if (_isCorpus) ...[
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                    color: AppColors.warningLight,
-                    borderRadius:
-                    BorderRadius.circular(8)),
-                child: Row(children: [
-                  const Icon(Icons.warning_amber,
-                      color: AppColors.warning,
-                      size: 16),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(
-                      _isAdmin
-                          ? 'This amount will be deducted from corpus fund immediately.'
-                          : 'Admin will review and deduct from corpus if approved.',
-                      style: const TextStyle(
-                          fontSize: 11,
-                          color: AppColors.warning))),
-                ]),
-              ),
-            ],
+            const SizedBox(height: 6),
+            const Text(
+                'Tip: upload the bill photo to Google '
+                'Drive or Photos and paste the share '
+                'link here.',
+                style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textMuted)),
             const SizedBox(height: 16),
 
             // ── Error ─────────────────────────────────

@@ -65,8 +65,14 @@ class DashboardRepository {
 
     final paidBills    = billsSnap.docs.where((d) =>
     (d.data() as Map)['status'] == 'paid').toList();
-    final unpaidBills  = billsSnap.docs.where((d) =>
-    (d.data() as Map)['status'] == 'unpaid').toList();
+    // 'reported' = resident claims paid but not yet
+    // confirmed → still counts as pending/unpaid.
+    final unpaidBills  = billsSnap.docs.where((d) {
+      final st = (d.data() as Map)['status'];
+      return st == 'unpaid' || st == 'reported';
+    }).toList();
+    final reportedCount = billsSnap.docs.where((d) =>
+    (d.data() as Map)['status'] == 'reported').length;
 
     final collected    = paidBills.fold(0.0, (s, d) =>
     s + ((d.data() as Map)['totalAmount'] as num).toDouble());
@@ -90,8 +96,62 @@ class DashboardRepository {
       corpusBalance:            corpusBalance,
       pendingExpenses:          expSnap.docs.length,
       pendingRequests:          reqSnap.docs.length,
+      reportedPayments:         reportedCount,
       month:                    month,
       monthlyApprovedExpenses:  monthlyApprovedExpenses,
     );
+  }
+
+  // ── Last 6 months collection trend ─────────────────
+  Future<List<MonthlyCollection>> getCollectionTrend(
+      String societyId) async {
+    final months = _lastSixMonths();
+
+    // Fetch paid bills for each month in parallel
+    final snaps = await Future.wait(
+      months.map((m) => _db
+          .collection('societies')
+          .doc(societyId)
+          .collection('bills')
+          .where('month', isEqualTo: m)
+          .get()),
+    );
+
+    return List.generate(months.length, (i) {
+      final snap      = snaps[i];
+      final collected = snap.docs
+          .where((d) =>
+      (d.data() as Map)['status'] == 'paid')
+          .fold(0.0, (s, d) =>
+      s + ((d.data() as Map)['totalAmount']
+      as num).toDouble());
+      final billed    = snap.docs
+          .fold(0.0, (s, d) =>
+      s + ((d.data() as Map)['totalAmount']
+      as num).toDouble());
+      return MonthlyCollection(
+        month:     months[i],
+        collected: collected,
+        billed:    billed,
+      );
+    });
+  }
+
+  // ── Generate last 6 month strings ──────────────────
+  List<String> _lastSixMonths() {
+    const abbr = [
+      'JAN','FEB','MAR','APR','MAY','JUN',
+      'JUL','AUG','SEP','OCT','NOV','DEC',
+    ];
+    final now    = DateTime.now();
+    final months = <String>[];
+    for (int i = 5; i >= 0; i--) {
+      // Go back i months from now
+      int m = now.month - i;
+      int y = now.year;
+      while (m <= 0) { m += 12; y--; }
+      months.add('${abbr[m - 1]}-$y');
+    }
+    return months;
   }
 }

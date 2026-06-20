@@ -42,8 +42,9 @@ class _SocietyWizardScreenState
   ];
 
   // ── Step 1 — Society Details ─────────────────────
-  final _nameCtrl    = TextEditingController();
-  final _addressCtrl = TextEditingController();
+  final _adminNameCtrl = TextEditingController();
+  final _nameCtrl      = TextEditingController();
+  final _addressCtrl   = TextEditingController();
 
   // ── Step 2 — Flat Types ──────────────────────────
   // [{typeName, amount}]
@@ -69,6 +70,7 @@ class _SocietyWizardScreenState
   @override
   void dispose() {
     _pageCtrl.dispose();
+    _adminNameCtrl.dispose();
     _nameCtrl.dispose();
     _addressCtrl.dispose();
     super.dispose();
@@ -152,6 +154,11 @@ class _SocietyWizardScreenState
     // ── Validate each step ──────────────────────
     switch (_step) {
       case 0:
+        if (_adminNameCtrl.text.trim().isEmpty) {
+          setState(() =>
+          _error = 'Please enter your name');
+          return;
+        }
         if (_nameCtrl.text.trim().isEmpty) {
           setState(() =>
           _error = 'Please enter the society name');
@@ -275,6 +282,7 @@ class _SocietyWizardScreenState
 
       final society = await repo.createSociety(
         adminId:   uid,
+        adminName: _adminNameCtrl.text.trim(),
         name:      _nameCtrl.text.trim(),
         address:   _addressCtrl.text.trim(),
         flatTypes: flatTypes,
@@ -622,8 +630,19 @@ class _SocietyWizardScreenState
     children: [
       const SizedBox(height: 8),
       TextFormField(
-        controller: _nameCtrl,
+        controller: _adminNameCtrl,
         autofocus: true,
+        textCapitalization:
+        TextCapitalization.words,
+        decoration: const InputDecoration(
+          labelText: 'Your Name *',
+          hintText: 'e.g. Ramesh Kumar',
+          prefixIcon: Icon(Icons.person_outline),
+        ),
+      ),
+      const SizedBox(height: 16),
+      TextFormField(
+        controller: _nameCtrl,
         textCapitalization:
         TextCapitalization.words,
         decoration: const InputDecoration(
@@ -651,9 +670,10 @@ class _SocietyWizardScreenState
       const SizedBox(height: 16),
       _InfoBox(
         icon: '💡',
-        text: 'The society name appears in '
-            'all notifications and '
-            'reports sent to residents.',
+        text: 'Your name will appear on '
+            'reports and billing records. '
+            'Society name appears in all '
+            'resident notifications.',
       ),
     ],
   );

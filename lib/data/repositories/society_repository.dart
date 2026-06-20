@@ -1,9 +1,67 @@
 import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/society_model.dart';
+import '../services/notification_service.dart';
 
 class SocietyRepository {
   final _db = FirebaseFirestore.instance;
+
+  // ── List members eligible to become admin ──────────
+  // (society members who are owners/tenants, not the
+  //  current admin).
+  Future<List<Map<String, dynamic>>>
+      getTransferCandidates(String societyId) async {
+    final snap = await _db
+        .collection('users')
+        .where('societyId', isEqualTo: societyId)
+        .get();
+    return snap.docs
+        .where((d) =>
+    (d.data()['role'] as String?) != 'admin' &&
+        (d.data()['flatId'] as String?) != null)
+        .map((d) => {'id': d.id, ...d.data()})
+        .toList();
+  }
+
+  // ── Direct admin transfer (current admin only) ─────
+  // Runs on the current admin's device, so security
+  // rules permit all three writes (the requester is
+  // still admin at evaluation time, atomically).
+  Future<void> transferAdmin({
+    required String societyId,
+    required String newAdminId,
+    required String oldAdminId,
+  }) async {
+    final batch = _db.batch();
+
+    // 1. Point the society to the new admin
+    batch.update(
+      _db.collection('societies').doc(societyId),
+      {'adminId': newAdminId},
+    );
+    // 2. Promote new admin
+    batch.update(
+      _db.collection('users').doc(newAdminId),
+      {'role': 'admin'},
+    );
+    // 3. Demote old admin to owner
+    batch.update(
+      _db.collection('users').doc(oldAdminId),
+      {'role': 'owner'},
+    );
+
+    await batch.commit();
+
+    // Notify the new admin
+    notificationService.notifyUser(
+      userId: newAdminId,
+      title:  '👑 You are now the Admin',
+      body:   'You have been made the admin of your '
+              'society. You can now manage billing, '
+              'expenses and members.',
+      type:   'adminTransferred',
+    ).catchError((_) {});
+  }
 
   // ── Generate unique 6-char invite code ─────────────────────────────────────
   String _generateInviteCode() {
@@ -19,17 +77,21 @@ class SocietyRepository {
   // flat type docs it creates in the same batch.
   Future<SocietyModel> createSociety({
     required String adminId,
+    required String adminName,
     required String name,
     required String address,
     required List<FlatTypeModel> flatTypes,
     required List<Map<String, dynamic>> flats,
   }) async {
-    final batch      = _db.batch();
     final societyRef = _db.collection('societies').doc();
     final inviteCode = _generateInviteCode();
     final now        = DateTime.now();
 
-    // 1. Create society document
+    // 1. Create society document FIRST (separate commit).
+    //    Security rules determine admin status from
+    //    society.adminId, so this doc must be committed
+    //    before the batch below — otherwise isAdmin() can't
+    //    resolve for the flat/corpus/contact writes.
     final society = SocietyModel(
       id:         societyRef.id,
       name:       name,
@@ -39,7 +101,10 @@ class SocietyRepository {
       address:    address.isEmpty ? null : address,
       createdAt:  now,
     );
-    batch.set(societyRef, society.toMap());
+    await societyRef.set(society.toMap());
+
+    // Everything else in one atomic batch (isAdmin now true)
+    final batch = _db.batch();
 
     // 2. Create flat type docs — build name→id map
     final typeNameToId   = <String, String>{};
@@ -104,10 +169,11 @@ class SocietyRepository {
       });
     }
 
-    // 6. Set admin user profile
+    // 6. Set admin user profile (including name)
     batch.set(
       _db.collection('users').doc(adminId),
       {
+        'name':      adminName.trim(),
         'societyId': societyRef.id,
         'role':      'admin',
         'createdAt': Timestamp.now(),

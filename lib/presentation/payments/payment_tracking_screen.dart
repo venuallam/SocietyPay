@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/constants/app_constants.dart';
 import '../../data/models/bill_model.dart';
 import '../../data/repositories/billing_repository.dart';
@@ -204,13 +205,17 @@ class _PaymentTrackingScreenState
 
           final allBills = snap.data ?? [];
 
-          // Apply filter
+          // Apply filter. 'unpaid' includes reported
+          // (not-yet-confirmed) bills.
           final bills = switch (_filter) {
-            'paid'   => allBills.where(
+            'paid'     => allBills.where(
                     (b) => b.isPaid).toList(),
-            'unpaid' => allBills.where(
-                    (b) => b.isUnpaid).toList(),
-            _        => allBills,
+            'unpaid'   => allBills.where(
+                    (b) => b.isUnpaid
+                        || b.isReported).toList(),
+            'reported' => allBills.where(
+                    (b) => b.isReported).toList(),
+            _          => allBills,
           };
 
           if (allBills.isEmpty) {
@@ -226,6 +231,8 @@ class _PaymentTrackingScreenState
                   (b) => b.isPaid);
           final unpaid    = allBills.where(
                   (b) => b.isUnpaid);
+          final reported  = allBills.where(
+                  (b) => b.isReported);
           final collected = paid.fold(0.0,
                   (s, b) => s + b.totalAmount);
           final pending   = unpaid.fold(0.0,
@@ -333,6 +340,15 @@ class _PaymentTrackingScreenState
                 ),
                 const SizedBox(width: 8),
                 _FilterChip(
+                  label: 'Reported',
+                  count: reported.length,
+                  selected: _filter == 'reported',
+                  color: AppColors.warning,
+                  onTap: () => setState(
+                          () => _filter = 'reported'),
+                ),
+                const SizedBox(width: 8),
+                _FilterChip(
                   label: 'Paid',
                   count: paid.length,
                   selected: _filter == 'paid',
@@ -413,6 +429,69 @@ class _BillTile extends StatefulWidget {
 class _BillTileState extends State<_BillTile> {
   bool _loading = false;
   final _repo   = BillingRepository();
+
+  Future<void> _rejectReport() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reject Report'),
+        content: Text(
+            'Mark ${widget.bill.flatNumber} as '
+            'unpaid again? The resident will be '
+            'notified to recheck.'),
+        actions: [
+          TextButton(
+              onPressed: () =>
+                  Navigator.pop(ctx, false),
+              child: const Text('Cancel')),
+          ElevatedButton(
+              onPressed: () =>
+                  Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                  AppColors.danger),
+              child: const Text('Reject')),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    setState(() => _loading = true);
+    try {
+      await _repo.rejectPaymentReport(
+        societyId: widget.societyId,
+        billId:    widget.bill.id,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: AppColors.danger));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _openProof(String proof) async {
+    if (proof.startsWith('http')) {
+      final uri = Uri.tryParse(proof);
+      if (uri != null) {
+        await launchUrl(uri,
+            mode: LaunchMode
+                .externalApplication);
+        return;
+      }
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(
+          content: Text('Reference: $proof')));
+    }
+  }
 
   Future<void> _markPaid() async {
     setState(() => _loading = true);
@@ -501,16 +580,27 @@ class _BillTileState extends State<_BillTile> {
 
   @override
   Widget build(BuildContext context) {
-    final isPaid = widget.bill.isPaid;
+    final bill       = widget.bill;
+    final isPaid     = bill.isPaid;
+    final isReported = bill.isReported;
+    // Accent colour by status
+    final accent = isPaid
+        ? AppColors.success
+        : isReported
+            ? AppColors.warning
+            : AppColors.danger;
+    final accentBg = isPaid
+        ? AppColors.successLight
+        : isReported
+            ? AppColors.warningLight
+            : AppColors.dangerLight;
 
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-            color: isPaid
-                ? AppColors.success.withOpacity(0.3)
-                : AppColors.danger.withOpacity(0.3)),
+            color: accent.withOpacity(0.3)),
       ),
       child: Column(children: [
         // ── Main Info ──────────────────────────────
@@ -521,9 +611,7 @@ class _BillTileState extends State<_BillTile> {
             Container(
               width: 52, height: 52,
               decoration: BoxDecoration(
-                  color: isPaid
-                      ? AppColors.successLight
-                      : AppColors.dangerLight,
+                  color: accentBg,
                   borderRadius:
                   BorderRadius.circular(14)),
               child: Center(child: Text(
@@ -532,9 +620,7 @@ class _BillTileState extends State<_BillTile> {
                 style: TextStyle(
                     fontWeight: FontWeight.w800,
                     fontSize: 16,
-                    color: isPaid
-                        ? AppColors.success
-                        : AppColors.danger),
+                    color: accent),
               )),
             ),
             const SizedBox(width: 12),
@@ -589,19 +675,20 @@ class _BillTileState extends State<_BillTile> {
                         horizontal: 10,
                         vertical: 3),
                     decoration: BoxDecoration(
-                        color: isPaid
-                            ? AppColors.successLight
-                            : AppColors.dangerLight,
+                        color: accentBg,
                         borderRadius:
                         BorderRadius.circular(20)),
                     child: Text(
-                        isPaid ? '✅ PAID' : '🔴 UNPAID',
+                        isPaid
+                            ? '✅ PAID'
+                            : isReported
+                                ? '⏳ REPORTED'
+                                : '🔴 UNPAID',
                         style: TextStyle(
                             fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            color: isPaid
-                                ? AppColors.success
-                                : AppColors.danger))),
+                            fontWeight:
+                            FontWeight.w700,
+                            color: accent))),
               ],
             ),
           ]),
@@ -656,9 +743,53 @@ class _BillTileState extends State<_BillTile> {
           ),
         ],
 
+        // ── Reported proof row ─────────────────────
+        if (isReported) ...[
+          Container(
+            margin: const EdgeInsets.fromLTRB(
+                14, 0, 14, 8),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+                color: AppColors.warningLight,
+                borderRadius:
+                BorderRadius.circular(8)),
+            child: Row(children: [
+              const Icon(Icons.hourglass_top,
+                  size: 14,
+                  color: AppColors.warning),
+              const SizedBox(width: 6),
+              Expanded(child: Text(
+                  (bill.paymentProof ?? '')
+                      .isEmpty
+                      ? 'Resident reported payment '
+                        '(no reference given)'
+                      : 'Ref: ${bill.paymentProof}',
+                  maxLines: 1,
+                  overflow:
+                  TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.warning))),
+              if ((bill.paymentProof ?? '')
+                  .startsWith('http'))
+                TextButton(
+                  onPressed: () => _openProof(
+                      bill.paymentProof!),
+                  style: TextButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      minimumSize:
+                      const Size(40, 28)),
+                  child: const Text('Open',
+                      style: TextStyle(
+                          fontSize: 11)),
+                ),
+            ]),
+          ),
+        ],
+
         const Divider(height: 1),
 
-        // ── Action button ──────────────────────────
+        // ── Action button(s) ───────────────────────
         Padding(
           padding: const EdgeInsets.all(10),
           child: _loading
@@ -669,35 +800,73 @@ class _BillTileState extends State<_BillTile> {
                       strokeWidth: 2,
                       color: AppColors.primary)))
               : isPaid
+              // PAID → Undo
               ? SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
                 onPressed: _undoPayment,
-                icon: const Icon(
-                    Icons.undo,
+                icon: const Icon(Icons.undo,
                     size: 16,
                     color: AppColors.warning),
-                label: const Text(
-                    'Undo Payment',
+                label: const Text('Undo Payment',
                     style: TextStyle(
                         color: AppColors.warning,
                         fontSize: 13)),
                 style: OutlinedButton.styleFrom(
                     side: const BorderSide(
-                        color: AppColors.warning),
+                        color:
+                        AppColors.warning),
                     padding:
                     const EdgeInsets.symmetric(
                         vertical: 8)),
               ))
+              : isReported
+              // REPORTED → Confirm / Reject
+              ? Row(children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: _rejectReport,
+                style: OutlinedButton.styleFrom(
+                    side: const BorderSide(
+                        color:
+                        AppColors.danger),
+                    padding:
+                    const EdgeInsets.symmetric(
+                        vertical: 8)),
+                child: const Text('Reject',
+                    style: TextStyle(
+                        color: AppColors.danger,
+                        fontSize: 13)),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              flex: 2,
+              child: ElevatedButton.icon(
+                onPressed: _markPaid,
+                icon: const Icon(
+                    Icons.check, size: 16),
+                label: const Text(
+                    'Confirm Payment',
+                    style:
+                    TextStyle(fontSize: 13)),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                    AppColors.success,
+                    padding:
+                    const EdgeInsets.symmetric(
+                        vertical: 8)),
+              ),
+            ),
+          ])
+              // UNPAID → Mark as Paid
               : SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: _markPaid,
-                icon: const Icon(
-                    Icons.check,
+                icon: const Icon(Icons.check,
                     size: 16),
-                label: const Text(
-                    'Mark as Paid',
+                label: const Text('Mark as Paid',
                     style: TextStyle(
                         fontSize: 13)),
                 style: ElevatedButton.styleFrom(

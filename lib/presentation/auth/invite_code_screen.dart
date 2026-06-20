@@ -6,6 +6,7 @@ import '../../data/repositories/society_repository.dart';
 import '../../data/models/society_model.dart';
 import '../society/society_wizard_screen.dart';
 import 'select_role_screen.dart';
+import '../../main.dart';
 
 class InviteCodeScreen extends StatefulWidget {
   const InviteCodeScreen({super.key});
@@ -27,6 +28,90 @@ class _InviteCodeScreenState
     _codeCtrl.dispose();
     _nameCtrl.dispose();
     super.dispose();
+  }
+
+  // Logout — in case the user signed in with the wrong
+  // number or can't find their society.
+  Future<void> _logout() async {
+    final confirm = await showModalBottomSheet<bool>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(
+              top: Radius.circular(20))),
+      backgroundColor: Colors.white,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.fromLTRB(
+            24, 20, 24,
+            MediaQuery.of(ctx).padding.bottom + 24),
+        child: Column(mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                  color: AppColors.border,
+                  borderRadius:
+                  BorderRadius.circular(2)),
+            ),
+            const SizedBox(height: 20),
+            Container(
+              width: 64, height: 64,
+              decoration: const BoxDecoration(
+                  color: AppColors.dangerLight,
+                  shape: BoxShape.circle),
+              child: const Icon(
+                  Icons.logout_rounded,
+                  color: AppColors.danger,
+                  size: 28),
+            ),
+            const SizedBox(height: 16),
+            const Text('Logout?',
+                style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textPrimary)),
+            const SizedBox(height: 8),
+            const Text(
+                'You will be signed out and can log '
+                'in with a different mobile number.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 13,
+                    color: AppColors.textSecondary)),
+            const SizedBox(height: 24),
+            Row(children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () =>
+                      Navigator.pop(ctx, false),
+                  child: const Text('Cancel'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () =>
+                      Navigator.pop(ctx, true),
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.danger),
+                  child: const Text('Yes, Logout'),
+                ),
+              ),
+            ]),
+          ],
+        ),
+      ),
+    );
+    if (confirm != true) return;
+
+    await FirebaseAuth.instance.signOut();
+    if (mounted) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(
+            builder: (_) => const AuthWrapper()),
+            (route) => false,
+      );
+    }
   }
 
   Future<void> _verify() async {
@@ -288,6 +373,25 @@ class _InviteCodeScreenState
                       'Tap "Create a New Society" above.',
                   textAlign: TextAlign.center,
                   style: AppText.small),
+
+              const SizedBox(height: 28),
+              const Divider(),
+              const SizedBox(height: 8),
+
+              // Logout — wrong number / can't find society
+              TextButton.icon(
+                onPressed: _logout,
+                icon: const Icon(Icons.logout,
+                    size: 18,
+                    color: AppColors.danger),
+                label: const Text(
+                    'Logout / use another number',
+                    style: TextStyle(
+                        color: AppColors.danger,
+                        fontWeight:
+                        FontWeight.w600)),
+              ),
+              const SizedBox(height: 16),
             ]),
           ),
         ),

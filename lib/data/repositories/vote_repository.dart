@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/vote_model.dart';
+import '../services/notification_service.dart';
 
 class VoteRepository {
   final _db = FirebaseFirestore.instance;
@@ -79,6 +80,15 @@ class VoteRepository {
     );
 
     await ref.set(vote.toMap());
+
+    // Notify all members a new vote has started
+    notificationService.notifyAllMembers(
+      societyId: societyId,
+      title: '🗳️ New Vote Started',
+      body:  '$title — You have $durationDays day(s) to cast your vote.',
+      type:  'voteStarted',
+    ).catchError((_) {});
+
     return ref.id;
   }
 
@@ -116,11 +126,12 @@ class VoteRepository {
 
     await batch.commit();
 
-    // Check if vote should auto-pass/reject
-    await _checkVoteResult(
-      societyId: societyId,
-      voteId:    voteId,
-    );
+    // Resolution (status change + role/maintenance side
+    // effects) is handled server-side by the
+    // `resolveVoteOnCast` Cloud Function, which runs with
+    // admin privileges. The client only records the cast +
+    // tally, so members can vote without permission issues.
+    // (Admins can also force-close early via expireVote.)
   }
 
   // ── Check if user already voted ─────────────────

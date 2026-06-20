@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/expense_model.dart';
+import '../services/notification_service.dart';
 
 class ExpenseRepository {
   final _db = FirebaseFirestore.instance;
@@ -17,20 +18,25 @@ class ExpenseRepository {
   // ── Watch all expenses (admin) ──────────────────────
   Stream<List<ExpenseModel>> watchAllExpenses(
       String societyId, {String? month}) {
-    Query query = _db
+    // Sort client-side to avoid composite index needs.
+    return _db
         .collection('societies')
         .doc(societyId)
         .collection('expenses')
-        .orderBy('createdAt', descending: true);
-
-    if (month != null) {
-      query = query.where(
-          'month', isEqualTo: month);
-    }
-
-    return query.snapshots().map((s) =>
-        s.docs.map((d) =>
-            ExpenseModel.fromDoc(d)).toList());
+        .snapshots()
+        .map((s) {
+      var list = s.docs
+          .map((d) => ExpenseModel.fromDoc(d))
+          .toList();
+      if (month != null) {
+        list = list
+            .where((e) => e.month == month)
+            .toList();
+      }
+      list.sort((a, b) =>
+          b.createdAt.compareTo(a.createdAt));
+      return list;
+    });
   }
 
   // ── Watch pending expenses (admin) ─────────────────
@@ -41,49 +47,68 @@ class ExpenseRepository {
         .doc(societyId)
         .collection('expenses')
         .where('status', isEqualTo: 'pending')
-        .orderBy('createdAt', descending: true)
         .snapshots()
-        .map((s) => s.docs
-        .map((d) => ExpenseModel.fromDoc(d))
-        .toList());
+        .map((s) {
+      final list = s.docs
+          .map((d) => ExpenseModel.fromDoc(d))
+          .toList();
+      list.sort((a, b) =>
+          b.createdAt.compareTo(a.createdAt));
+      return list;
+    });
   }
 
   // ── Watch member's own submitted expenses ──────────
   Stream<List<ExpenseModel>> watchMemberExpenses(
       String societyId, String userId, {String? month}) {
-    Query query = _db
+    // Single-field equality (auto-indexed). Month filter
+    // and sort are applied client-side to avoid needing a
+    // composite index.
+    return _db
         .collection('societies')
         .doc(societyId)
         .collection('expenses')
         .where('addedBy', isEqualTo: userId)
-        .orderBy('createdAt', descending: true);
-
-    if (month != null) {
-      query = query.where('month', isEqualTo: month);
-    }
-
-    return query.snapshots().map((s) =>
-        s.docs.map((d) => ExpenseModel.fromDoc(d)).toList());
+        .snapshots()
+        .map((s) {
+      var list = s.docs
+          .map((d) => ExpenseModel.fromDoc(d))
+          .toList();
+      if (month != null) {
+        list = list
+            .where((e) => e.month == month)
+            .toList();
+      }
+      list.sort((a, b) =>
+          b.createdAt.compareTo(a.createdAt));
+      return list;
+    });
   }
 
   // ── Watch approved expenses (members) ─────────────
   Stream<List<ExpenseModel>> watchApprovedExpenses(
       String societyId, {String? month}) {
-    Query query = _db
+    // Single-field equality (auto-indexed). Month filter
+    // and sort applied client-side — no composite index.
+    return _db
         .collection('societies')
         .doc(societyId)
         .collection('expenses')
         .where('status', isEqualTo: 'approved')
-        .orderBy('createdAt', descending: true);
-
-    if (month != null) {
-      query = query.where(
-          'month', isEqualTo: month);
-    }
-
-    return query.snapshots().map((s) =>
-        s.docs.map((d) =>
-            ExpenseModel.fromDoc(d)).toList());
+        .snapshots()
+        .map((s) {
+      var list = s.docs
+          .map((d) => ExpenseModel.fromDoc(d))
+          .toList();
+      if (month != null) {
+        list = list
+            .where((e) => e.month == month)
+            .toList();
+      }
+      list.sort((a, b) =>
+          b.createdAt.compareTo(a.createdAt));
+      return list;
+    });
   }
 
   // ── Add expense (admin — auto approved) ────────────
@@ -95,6 +120,7 @@ class ExpenseRepository {
     required String description,
     required double amount,
     required bool isCorpusDeduction,
+    String? receiptLink,
   }) async {
     final now   = DateTime.now();
     final month = _currentMonth();
@@ -116,6 +142,7 @@ class ExpenseRepository {
       addedBy:           adminId,
       addedByName:       adminName,
       approvedBy:        adminId,
+      receiptLink:       receiptLink,
       createdAt:         now,
     );
 
@@ -134,6 +161,7 @@ class ExpenseRepository {
     required String description,
     required double amount,
     bool isCorpusDeduction = false,
+    String? receiptLink,
   }) async {
     final now   = DateTime.now();
     final month = _currentMonth();
@@ -152,12 +180,22 @@ class ExpenseRepository {
       year:              now.year,
       isCorpusDeduction: isCorpusDeduction,
       status:            ExpenseStatus.pending,
+      receiptLink:       receiptLink,
       addedBy:           userId,
       addedByName:       userName,
       createdAt:         now,
     );
 
     await ref.set(expense.toMap());
+
+    // Notify admin a member has suggested an expense
+    notificationService.notifyAdmin(
+      societyId: societyId,
+      title: '💸 New Expense Request',
+      body:  '$userName has requested ₹${amount.toStringAsFixed(0)} '
+             'for $description.',
+      type:  'expenseRequest',
+    ).catchError((_) {});
   }
 
   // ── Approve expense (admin) ────────────────────────
@@ -171,6 +209,17 @@ class ExpenseRepository {
     required String category,
     required String month,
   }) async {
+    // Read expense to get submitter details
+    final snap = await _db
+        .collection('societies')
+        .doc(societyId)
+        .collection('expenses')
+        .doc(expenseId)
+        .get();
+    final data    = snap.data() as Map<String, dynamic>?;
+    final addedBy = data?['addedBy'] as String?;
+    final desc    = data?['description'] as String? ?? description;
+
     await _db
         .collection('societies')
         .doc(societyId)
@@ -183,6 +232,17 @@ class ExpenseRepository {
 
     // Corpus deduction is deferred to month-end closing.
     // No immediate corpus update here.
+
+    // Notify the expense submitter (if not admin themselves)
+    if (addedBy != null && addedBy != adminId) {
+      notificationService.notifyUser(
+        userId: addedBy,
+        title:  '✅ Expense Approved',
+        body:   'Your expense request for "$desc" '
+                '(₹${amount.toStringAsFixed(0)}) has been approved.',
+        type:   'expenseApproved',
+      ).catchError((_) {});
+    }
   }
 
   // ── Reject expense (admin) ─────────────────────────
@@ -191,6 +251,17 @@ class ExpenseRepository {
     required String expenseId,
     required String reason,
   }) async {
+    // Read expense to get submitter details
+    final snap = await _db
+        .collection('societies')
+        .doc(societyId)
+        .collection('expenses')
+        .doc(expenseId)
+        .get();
+    final data    = snap.data() as Map<String, dynamic>?;
+    final addedBy = data?['addedBy'] as String?;
+    final desc    = data?['description'] as String? ?? '';
+
     await _db
         .collection('societies')
         .doc(societyId)
@@ -200,6 +271,18 @@ class ExpenseRepository {
       'status':          'rejected',
       'rejectionReason': reason,
     });
+
+    // Notify the expense submitter
+    if (addedBy != null) {
+      notificationService.notifyUser(
+        userId: addedBy,
+        title:  '❌ Expense Rejected',
+        body:   'Your expense request for "$desc" '
+                'was not approved. '
+                'Reason: $reason',
+        type:   'expenseRejected',
+      ).catchError((_) {});
+    }
   }
 
   // ── Get expense summary for month ─────────────────

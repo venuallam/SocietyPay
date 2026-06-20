@@ -9,6 +9,8 @@ import '../../data/services/notification_service.dart';
 import '../corpus/corpus_screen.dart';
 import '../contacts/contacts_screen.dart';
 import '../expenses/expense_list_screen.dart';
+import '../expenses/add_expense_screen.dart';
+import '../../core/ads/banner_ad_widget.dart';
 import '../payments/resident_bills_screen.dart';
 import '../notifications/my_notifications_screen.dart';
 import '../voting/voting_screen.dart';
@@ -18,6 +20,9 @@ class ResidentDashboardScreen extends StatefulWidget {
   final String societyId;
   final String flatId;
   final String name;
+  // When true, admin is viewing their own flat —
+  // show a back-to-admin button.
+  final bool isAdminView;
 
   const ResidentDashboardScreen({
     super.key,
@@ -25,6 +30,7 @@ class ResidentDashboardScreen extends StatefulWidget {
     required this.societyId,
     required this.flatId,
     required this.name,
+    this.isAdminView = false,
   });
 
   @override
@@ -38,10 +44,12 @@ class _ResidentDashboardState
   Map<String, dynamic>? _societyData;
   Map<String, dynamic>? _billData;
   Map<String, dynamic>? _corpusData;
-  double _monthAccumulation      = 0;
   double _monthApprovedExpenses  = 0;
+  double _totalOutstanding       = 0;
+  int    _outstandingCount       = 0;
   bool _loading = true;
   late String _currentMonth;
+  int _currentNavIndex = 0;
 
   Future<void> _logout() async {
     final confirm = await showModalBottomSheet<bool>(
@@ -186,16 +194,15 @@ class _ResidentDashboardState
             .doc(widget.societyId)
             .get(),
 
-        // Current month bill
+        // All my bills (single-field filter, rules-safe).
+        // Current-month bill + total outstanding are
+        // derived from this client-side.
         FirebaseFirestore.instance
             .collection('societies')
             .doc(widget.societyId)
             .collection('bills')
-            .where('flatId',
-            isEqualTo: widget.flatId)
-            .where('month',
-            isEqualTo: _currentMonth)
-            .limit(1)
+            .where('billingResponsibleId',
+            isEqualTo: widget.userId)
             .get(),
 
         // Corpus balance
@@ -204,16 +211,8 @@ class _ResidentDashboardState
             .doc(widget.societyId)
             .get(),
 
-        // Society-wide paid bills this month
-        FirebaseFirestore.instance
-            .collection('societies')
-            .doc(widget.societyId)
-            .collection('bills')
-            .where('month', isEqualTo: _currentMonth)
-            .where('status', isEqualTo: 'paid')
-            .get(),
-
         // Society-wide approved expenses this month
+        // (members are allowed to see society spending)
         FirebaseFirestore.instance
             .collection('societies')
             .doc(widget.societyId)
@@ -227,32 +226,42 @@ class _ResidentDashboardState
       final societySnap    = results[1] as DocumentSnapshot;
       final billsSnap      = results[2] as QuerySnapshot;
       final corpusSnap     = results[3] as DocumentSnapshot;
-      final paidBillsSnap  = results[4] as QuerySnapshot;
-      final approvedExpSnap= results[5] as QuerySnapshot;
-
-      final accumulation = paidBillsSnap.docs.fold(0.0,
-          (s, d) => s +
-              ((d.data() as Map)['totalAmount'] as num)
-                  .toDouble());
+      final approvedExpSnap= results[4] as QuerySnapshot;
 
       final approvedExp = approvedExpSnap.docs.fold(0.0,
           (s, d) => s +
               ((d.data() as Map)['amount'] as num)
                   .toDouble());
 
+      // Derive current-month bill + total outstanding
+      Map<String, dynamic>? currentBill;
+      double outstanding = 0;
+      int    outstandingCount = 0;
+      for (final d in billsSnap.docs) {
+        final b = d.data() as Map<String, dynamic>;
+        if (b['month'] == _currentMonth) {
+          currentBill = b;
+        }
+        final st = b['status'];
+        if (st != 'paid') {
+          outstanding +=
+              (b['totalAmount'] as num? ?? 0)
+                  .toDouble();
+          outstandingCount += 1;
+        }
+      }
+
       setState(() {
         _flatData    = flatSnap.data()
         as Map<String, dynamic>?;
         _societyData = societySnap.data()
         as Map<String, dynamic>?;
-        _billData    = billsSnap.docs.isNotEmpty
-            ? billsSnap.docs.first.data()
-        as Map<String, dynamic>
-            : null;
+        _billData    = currentBill;
         _corpusData             = corpusSnap.data()
         as Map<String, dynamic>?;
-        _monthAccumulation      = accumulation;
         _monthApprovedExpenses  = approvedExp;
+        _totalOutstanding       = outstanding;
+        _outstandingCount       = outstandingCount;
       });
     } catch (e) {
       debugPrint('Resident dashboard error: $e');
@@ -274,7 +283,15 @@ class _ResidentDashboardState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: RefreshIndicator(
+      body: _currentNavIndex == 4
+          ? _ResidentProfileTab(
+              name:    widget.name,
+              flatId:  widget.flatId,
+              flatData: _flatData,
+              societyData: _societyData,
+              onLogout: _logout,
+            )
+          : RefreshIndicator(
         onRefresh: _loadData,
         color: AppColors.primary,
         child: CustomScrollView(
@@ -285,6 +302,17 @@ class _ResidentDashboardState
               expandedHeight: 200,
               pinned: true,
               automaticallyImplyLeading: false,
+              // Admin-as-resident: show back button
+              leading: widget.isAdminView
+                  ? IconButton(
+                      icon: const Icon(
+                          Icons.arrow_back,
+                          color: Colors.white),
+                      tooltip: 'Back to Admin',
+                      onPressed: () =>
+                          Navigator.pop(context),
+                    )
+                  : null,
               flexibleSpace: FlexibleSpaceBar(
                 background: Container(
                   decoration: const BoxDecoration(
@@ -299,90 +327,81 @@ class _ResidentDashboardState
                   ),
                   padding:
                   const EdgeInsets.fromLTRB(
-                      20, 60, 20, 16),
+                      20, 56, 20, 16),
                   child: Column(
                     crossAxisAlignment:
                     CrossAxisAlignment.start,
+                    mainAxisAlignment:
+                    MainAxisAlignment.end,
                     children: [
-                      Row(
-                        mainAxisAlignment:
-                        MainAxisAlignment
-                            .spaceBetween,
-                        children: [
-                          Column(
-                            crossAxisAlignment:
-                            CrossAxisAlignment
-                                .start,
-                            children: [
-                              Text(
-                                  _greeting(),
-                                  style: TextStyle(
-                                      color: Colors
-                                          .white
-                                          .withOpacity(
-                                          0.65),
-                                      fontSize: 13)),
-                              Text(
-                                  widget.name,
-                                  style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 20,
-                                      fontWeight:
-                                      FontWeight.w800)),
-                              const SizedBox(height: 4),
-                              // Role badge
-                              Container(
-                                padding:
-                                const EdgeInsets
-                                    .symmetric(
-                                    horizontal: 8,
-                                    vertical: 3),
-                                decoration:
-                                BoxDecoration(
-                                    color: Colors
-                                        .white
-                                        .withOpacity(
-                                        0.15),
-                                    borderRadius:
-                                    BorderRadius
-                                        .circular(20)),
-                                child: Text(
-                                    '🏠 Resident',
-                                    style: TextStyle(
-                                        color: Colors
-                                            .white
-                                            .withOpacity(
-                                            0.9),
-                                        fontSize: 11,
-                                        fontWeight:
-                                        FontWeight.w600)),
-                              ),
-                            ],
-                          ),
-                          // Month badge
-                          Container(
-                            padding:
-                            const EdgeInsets
-                                .symmetric(
-                                horizontal: 12,
-                                vertical: 6),
-                            decoration: BoxDecoration(
-                                color: Colors.white
-                                    .withOpacity(0.15),
-                                borderRadius:
-                                BorderRadius
-                                    .circular(20)),
-                            child: Text(
-                                _currentMonth,
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight:
-                                    FontWeight.w700)),
-                          ),
-                        ],
+                      Text(
+                        _greeting(),
+                        style: TextStyle(
+                            color: Colors.white
+                                .withOpacity(0.65),
+                            fontSize: 13),
                       ),
-                      const SizedBox(height: 16),
+                      Text(
+                        widget.name,
+                        maxLines: 2,
+                        overflow:
+                        TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight:
+                            FontWeight.w800),
+                      ),
+                      const SizedBox(height: 6),
+                      // Resident badge + month — left
+                      // side only, clear of any actions
+                      Row(children: [
+                        Container(
+                          padding:
+                          const EdgeInsets
+                              .symmetric(
+                              horizontal: 8,
+                              vertical: 3),
+                          decoration: BoxDecoration(
+                              color: Colors.white
+                                  .withOpacity(0.15),
+                              borderRadius:
+                              BorderRadius
+                                  .circular(20)),
+                          child: Text(
+                              '🏠 Resident',
+                              style: TextStyle(
+                                  color: Colors
+                                      .white
+                                      .withOpacity(
+                                      0.9),
+                                  fontSize: 11,
+                                  fontWeight:
+                                  FontWeight.w600)),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding:
+                          const EdgeInsets
+                              .symmetric(
+                              horizontal: 8,
+                              vertical: 3),
+                          decoration: BoxDecoration(
+                              color: Colors.white
+                                  .withOpacity(0.12),
+                              borderRadius:
+                              BorderRadius
+                                  .circular(20)),
+                          child: Text(
+                              _currentMonth,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight:
+                                  FontWeight.w600)),
+                        ),
+                      ]),
+                      const SizedBox(height: 14),
                       // Society + Flat info
                       Container(
                         padding:
@@ -420,7 +439,7 @@ class _ResidentDashboardState
                           const SizedBox(width: 6),
                           Text(
                               _flatData?['flatNumber']
-                                  ?? widget.flatId,
+                                  ?? '',
                               style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 13,
@@ -432,14 +451,6 @@ class _ResidentDashboardState
                   ),
                 ),
               ),
-              actions: [
-                IconButton(
-                  icon: const Icon(
-                      Icons.logout,
-                      color: Colors.white),
-                  onPressed: _logout,
-                ),
-              ],
             ),
 
             // ── Body ────────────────────────────────
@@ -448,6 +459,44 @@ class _ResidentDashboardState
               sliver: SliverList(
                 delegate: SliverChildListDelegate([
 
+                  // Admin-as-resident banner
+                  if (widget.isAdminView)
+                    Container(
+                      margin: const EdgeInsets
+                          .only(bottom: 12),
+                      padding:
+                      const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10),
+                      decoration: BoxDecoration(
+                          color: AppColors
+                              .warningLight,
+                          borderRadius:
+                          BorderRadius
+                              .circular(10),
+                          border: Border.all(
+                              color: AppColors
+                                  .warning)),
+                      child: const Row(children: [
+                        Text('👑 ',
+                            style: TextStyle(
+                                fontSize: 16)),
+                        Expanded(
+                          child: Text(
+                            'Viewing as resident '
+                                '— your flat\'s '
+                                'bills and details',
+                            style: TextStyle(
+                                fontSize: 12,
+                                fontWeight:
+                                FontWeight.w600,
+                                color: AppColors
+                                    .warning),
+                          ),
+                        ),
+                      ]),
+                    ),
+
                   if (_loading)
                     const Center(
                         child: Padding(
@@ -455,6 +504,79 @@ class _ResidentDashboardState
                             child: CircularProgressIndicator(
                                 color: AppColors.primary)))
                   else ...[
+
+                    // ── Outstanding dues banner ──────
+                    // Shows total arrears carried across
+                    // all months, if any.
+                    if (_outstandingCount > 0) ...[
+                      GestureDetector(
+                        onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) =>
+                                    ResidentBillsScreen(
+                                      societyId:
+                                      widget.societyId,
+                                      userId:
+                                      widget.userId,
+                                      name: widget.name,
+                                    ))),
+                        child: Container(
+                          width: double.infinity,
+                          padding:
+                          const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                              color: AppColors
+                                  .dangerLight,
+                              borderRadius:
+                              BorderRadius.circular(
+                                  12),
+                              border: Border.all(
+                                  color: AppColors
+                                      .danger
+                                      .withOpacity(
+                                      0.3))),
+                          child: Row(children: [
+                            const Text('⚠️ ',
+                                style: TextStyle(
+                                    fontSize: 18)),
+                            Expanded(child: Column(
+                              crossAxisAlignment:
+                              CrossAxisAlignment
+                                  .start,
+                              children: [
+                                Text(
+                                  'Outstanding dues: '
+                                  '₹${_fmt(_totalOutstanding)}',
+                                  style:
+                                  const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight:
+                                      FontWeight
+                                          .w800,
+                                      color: AppColors
+                                          .danger),
+                                ),
+                                Text(
+                                  'Across $_outstandingCount '
+                                  'bill(s) · tap to pay',
+                                  style:
+                                  const TextStyle(
+                                      fontSize: 11,
+                                      color: AppColors
+                                          .danger),
+                                ),
+                              ],
+                            )),
+                            const Icon(
+                                Icons.chevron_right,
+                                color: AppColors
+                                    .danger),
+                          ]),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                    ],
 
                     // ── Current Bill Card ────────────
                     _BillCard(
@@ -481,11 +603,10 @@ class _ResidentDashboardState
 
                     const SizedBox(height: 14),
 
-                    // ── Society This Month ───────────
+                    // ── Society spending this month ──
                     _SocietyMonthCard(
-                      month:         _currentMonth,
-                      accumulation:  _monthAccumulation,
-                      expenses:      _monthApprovedExpenses,
+                      month:    _currentMonth,
+                      expenses: _monthApprovedExpenses,
                     ),
 
                     const SizedBox(height: 14),
@@ -511,16 +632,28 @@ class _ResidentDashboardState
     crossAxisSpacing: 10,
     children: [
     _QuickLink(
-    icon: '📊',
-    label: 'Expenses',
+    icon: '📞',
+    label: 'Contacts',
     onTap: () => Navigator.push(
     context,
     MaterialPageRoute(
-    builder: (_) => ExpenseListScreen(
+    builder: (_) => ContactsScreen(
     societyId: widget.societyId,
     userRole:  UserRole.owner,
     userName:  widget.name,
+    ))),
+    ),
+    _QuickLink(
+    icon: '💵',
+    label: 'Suggest\nExpense',
+    onTap: () => Navigator.push(
+    context,
+    MaterialPageRoute(
+    builder: (_) => AddExpenseScreen(
+    societyId: widget.societyId,
     userId:    widget.userId,
+    userName:  widget.name,
+    userRole:  UserRole.owner,
     ))),
     ),
     _QuickLink(
@@ -535,18 +668,6 @@ class _ResidentDashboardState
     ))),
     ),
     _QuickLink(
-    icon: '📞',
-    label: 'Contacts',
-    onTap: () => Navigator.push(
-    context,
-    MaterialPageRoute(
-    builder: (_) => ContactsScreen(
-    societyId: widget.societyId,
-    userRole:  UserRole.owner,
-    userName:  widget.name,
-    ))),
-    ),
-    _QuickLink(
     icon: '🗳️',
     label: 'Voting',
     onTap: () => Navigator.push(
@@ -558,26 +679,12 @@ class _ResidentDashboardState
     userName:  widget.name,
     ))),
     ),
-    _QuickLink(
-    icon: '📄',
-    label: 'My Bills',
-    onTap: () => Navigator.push(
-    context,
-    MaterialPageRoute(
-    builder: (_) =>
-    ResidentBillsScreen(
-    societyId: widget.societyId,
-    userId:    widget.userId,
-    name:      widget.name,
-    ))),
-    ),
-    _NotifQuickLink(
-    userId:    widget.userId,
-    societyId: widget.societyId,
-    ),
     ],
     ),
 
+                    const SizedBox(height: 16),
+                    const Center(
+                        child: BannerAdWidget()),
                     const SizedBox(height: 80),
                   ],
                 ]),
@@ -589,7 +696,7 @@ class _ResidentDashboardState
 
       // ── Bottom Nav ──────────────────────────────────
       bottomNavigationBar: BottomNavigationBar(
-        currentIndex: 0,
+        currentIndex: _currentNavIndex,
         selectedItemColor: AppColors.primary,
         unselectedItemColor: AppColors.textMuted,
         type: BottomNavigationBarType.fixed,
@@ -599,51 +706,59 @@ class _ResidentDashboardState
               activeIcon: Icon(Icons.home),
               label: 'Home'),
           BottomNavigationBarItem(
+              icon: Icon(Icons.receipt_long_outlined),
+              activeIcon: Icon(Icons.receipt_long),
+              label: 'My Bills'),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.notifications_outlined),
+              activeIcon: Icon(Icons.notifications),
+              label: 'Notices'),
+          BottomNavigationBarItem(
               icon: Icon(Icons.receipt_outlined),
               activeIcon: Icon(Icons.receipt),
               label: 'Expenses'),
           BottomNavigationBarItem(
-              icon: Icon(Icons.payment_outlined),
-              activeIcon: Icon(Icons.payment),
-              label: 'Bills'),
-          BottomNavigationBarItem(
-              icon: Icon(Icons.phone_outlined),
-              activeIcon: Icon(Icons.phone),
-              label: 'Contacts'),
+              icon: Icon(Icons.person_outline),
+              activeIcon: Icon(Icons.person),
+              label: 'Profile'),
         ],
-          onTap: (i) {
-            if (i == 1) {
-              Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => ExpenseListScreen(
-                        societyId: widget.societyId,
-                        userRole:  UserRole.owner,
-                        userName:  widget.name,
-                        userId:    widget.userId,
-                      )));
-            }
-            if (i == 2) {
-              Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => ResidentBillsScreen(
-                        societyId: widget.societyId,
-                        userId:    widget.userId,
-                        name:      widget.name,
-                      )));
-            }
-            if (i == 3) {
-              Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => ContactsScreen(
-                        societyId: widget.societyId,
-                        userRole:  UserRole.owner,
-                        userName:  widget.name,
-                      )));
-            }
-          },
+        onTap: (i) {
+          if (i == 0 || i == 4) {
+            setState(() =>
+            _currentNavIndex = i);
+            return;
+          }
+          if (i == 1) {
+            // My Bills
+            Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => ResidentBillsScreen(
+                      societyId: widget.societyId,
+                      userId:    widget.userId,
+                      name:      widget.name,
+                    )));
+          }
+          if (i == 2) {
+            // Notices
+            Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) =>
+                    const MyNotificationsScreen()));
+          }
+          if (i == 3) {
+            // Expenses (approved society expenses)
+            Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => ExpenseListScreen(
+                      societyId: widget.societyId,
+                      userRole:  UserRole.owner,
+                      userName:  widget.name,
+                    )));
+          }
+        },
       ),
     );
   }
@@ -908,131 +1023,62 @@ class _CorpusCard extends StatelessWidget {
   }
 }
 
-// ── Society Month Card ────────────────────────────────────────────────────────
+// ── Society Spending Card ─────────────────────────────────────────────────────
+// Shows approved society expenses for the month. Residents
+// cannot see other residents' collection totals (privacy +
+// security rules), so this card focuses on spending
+// transparency only.
 class _SocietyMonthCard extends StatelessWidget {
   final String month;
-  final double accumulation;
   final double expenses;
 
   const _SocietyMonthCard({
     required this.month,
-    required this.accumulation,
     required this.expenses,
   });
 
   @override
   Widget build(BuildContext context) {
-    final net        = accumulation - expenses;
-    final isPositive = net >= 0;
-
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: AppColors.border)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header
-          Row(
-            mainAxisAlignment:
-            MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('Society This Month',
-                  style: AppText.h4),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                    color: isPositive
-                        ? AppColors.successLight
-                        : AppColors.dangerLight,
-                    borderRadius:
-                    BorderRadius.circular(20)),
-                child: Text(
-                    '${isPositive ? '+' : ''}₹${NumberFormat('#,##0').format(net)}',
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: isPositive
-                            ? AppColors.success
-                            : AppColors.danger)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Row(children: [
-            // Accumulation
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                    color: AppColors.successLight,
-                    borderRadius:
-                    BorderRadius.circular(10)),
-                child: Column(
-                  crossAxisAlignment:
-                  CrossAxisAlignment.start,
-                  children: [
-                    const Text('📥',
-                        style: TextStyle(
-                            fontSize: 18)),
-                    const SizedBox(height: 6),
-                    Text(
-                        '₹${NumberFormat('#,##0').format(accumulation)}',
-                        style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w800,
-                            color: AppColors.success)),
-                    const SizedBox(height: 2),
-                    const Text(
-                        'Accumulation',
-                        style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.success)),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            // Approved expenses
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                    color: AppColors.warningLight,
-                    borderRadius:
-                    BorderRadius.circular(10)),
-                child: Column(
-                  crossAxisAlignment:
-                  CrossAxisAlignment.start,
-                  children: [
-                    const Text('💸',
-                        style: TextStyle(
-                            fontSize: 18)),
-                    const SizedBox(height: 6),
-                    Text(
-                        '₹${NumberFormat('#,##0').format(expenses)}',
-                        style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w800,
-                            color: AppColors.warning)),
-                    const SizedBox(height: 2),
-                    const Text(
-                        'Approved Expenses',
-                        style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.warning)),
-                  ],
-                ),
-              ),
-            ),
-          ]),
-        ],
-      ),
+      child: Row(children: [
+        Container(
+          width: 48, height: 48,
+          decoration: BoxDecoration(
+              color: AppColors.warningLight,
+              borderRadius:
+              BorderRadius.circular(12)),
+          child: const Center(
+              child: Text('💸',
+                  style: TextStyle(fontSize: 22))),
+        ),
+        const SizedBox(width: 14),
+        Expanded(child: Column(
+          crossAxisAlignment:
+          CrossAxisAlignment.start,
+          children: [
+            const Text('Society Spending',
+                style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textMuted)),
+            const SizedBox(height: 2),
+            Text(
+                '₹${NumberFormat('#,##0').format(expenses)}',
+                style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textPrimary)),
+            Text('Approved expenses · $month',
+                style: const TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textMuted)),
+          ],
+        )),
+      ]),
     );
   }
 }
@@ -1278,6 +1324,265 @@ class _NotifBell extends StatelessWidget {
                 )),
         ]);
       },
+    );
+  }
+}
+
+// ── Profile Info Tile ─────────────────────────────────────────────────────────
+class _ProfileTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final bool isCode;
+
+  const _ProfileTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.isCode = false,
+  });
+
+  @override
+  Widget build(BuildContext context) =>
+      Container(
+        margin: const EdgeInsets.fromLTRB(
+            16, 0, 16, 10),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius:
+          BorderRadius.circular(12),
+          border: Border.all(
+              color: AppColors.border),
+        ),
+        child: Row(children: [
+          Container(
+            width: 40, height: 40,
+            decoration: BoxDecoration(
+                color: AppColors.accentLight,
+                borderRadius:
+                BorderRadius.circular(10)),
+            child: Icon(icon,
+                color: AppColors.primary,
+                size: 20),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment:
+              CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: const TextStyle(
+                        fontSize: 11,
+                        color: AppColors.textMuted,
+                        fontWeight:
+                        FontWeight.w500)),
+                const SizedBox(height: 2),
+                Text(
+                  value.isEmpty ? '—' : value,
+                  style: TextStyle(
+                      fontSize:
+                      isCode ? 16 : 14,
+                      fontWeight:
+                      FontWeight.w700,
+                      color:
+                      AppColors.textPrimary,
+                      letterSpacing:
+                      isCode ? 3 : 0),
+                ),
+              ],
+            ),
+          ),
+        ]),
+      );
+}
+
+// ── Resident Profile Tab ──────────────────────────────────────────────────────
+class _ResidentProfileTab extends StatelessWidget {
+  final String name;
+  final String flatId;
+  final Map<String, dynamic>? flatData;
+  final Map<String, dynamic>? societyData;
+  final VoidCallback onLogout;
+
+  const _ResidentProfileTab({
+    required this.name,
+    required this.flatId,
+    required this.flatData,
+    required this.societyData,
+    required this.onLogout,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final phone = FirebaseAuth.instance
+        .currentUser?.phoneNumber ?? '';
+    final initial = name.isNotEmpty
+        ? name[0].toUpperCase() : 'R';
+    final flatNumber =
+        flatData?['flatNumber'] as String?
+            ?? flatId;
+    final flatType =
+        flatData?['flatTypeName'] as String?
+            ?? '';
+    final societyName =
+        societyData?['name'] as String? ?? '';
+
+    return ListView(
+      padding: EdgeInsets.zero,
+      children: [
+        // ── Header ──────────────────────────
+        Container(
+          width: double.infinity,
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                AppColors.primaryDark,
+                AppColors.primary,
+              ],
+            ),
+          ),
+          padding: EdgeInsets.fromLTRB(
+              24,
+              MediaQuery.of(context).padding.top + 32,
+              24,
+              32),
+          child: Column(
+            children: [
+              // Avatar
+              Container(
+                width: 80, height: 80,
+                decoration: BoxDecoration(
+                  color: Colors.white
+                      .withOpacity(0.2),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                      color: Colors.white
+                          .withOpacity(0.4),
+                      width: 2),
+                ),
+                child: Center(
+                  child: Text(initial,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 34,
+                          fontWeight:
+                          FontWeight.w800)),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                name,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                mainAxisAlignment:
+                MainAxisAlignment.center,
+                children: [
+                  Container(
+                    padding:
+                    const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 4),
+                    decoration: BoxDecoration(
+                        color: Colors.white
+                            .withOpacity(0.15),
+                        borderRadius:
+                        BorderRadius.circular(20)),
+                    child: const Text(
+                        '🏠 Resident',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight:
+                            FontWeight.w600)),
+                  ),
+                  if (flatType.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding:
+                      const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 4),
+                      decoration: BoxDecoration(
+                          color: Colors.white
+                              .withOpacity(0.12),
+                          borderRadius:
+                          BorderRadius.circular(20)),
+                      child: Text(
+                          flatType,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight:
+                              FontWeight.w600)),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 8),
+
+        // ── Info tiles ───────────────────────
+        _ProfileTile(
+          icon: Icons.phone_outlined,
+          label: 'Phone',
+          value: phone,
+        ),
+        _ProfileTile(
+          icon: Icons.home_outlined,
+          label: 'Flat',
+          value: flatNumber,
+        ),
+        if (societyName.isNotEmpty)
+          _ProfileTile(
+            icon: Icons.apartment_outlined,
+            label: 'Society',
+            value: societyName,
+          ),
+
+        const SizedBox(height: 32),
+
+        // ── Logout ───────────────────────────
+        Padding(
+          padding: const EdgeInsets.symmetric(
+              horizontal: 24),
+          child: OutlinedButton.icon(
+            onPressed: onLogout,
+            icon: const Icon(
+                Icons.logout,
+                color: AppColors.danger),
+            label: const Text('Logout',
+                style: TextStyle(
+                    color: AppColors.danger,
+                    fontWeight:
+                    FontWeight.w700)),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(
+                  double.infinity, 52),
+              side: const BorderSide(
+                  color: AppColors.danger),
+              shape: RoundedRectangleBorder(
+                  borderRadius:
+                  BorderRadius.circular(12)),
+            ),
+          ),
+        ),
+        const SizedBox(height: 32),
+      ],
     );
   }
 }

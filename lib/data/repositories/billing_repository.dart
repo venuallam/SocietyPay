@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/bill_model.dart';
 import '../models/user_model.dart';
+import '../services/notification_service.dart';
 
 class BillingRepository {
   final _db = FirebaseFirestore.instance;
@@ -173,6 +174,18 @@ class BillingRepository {
 
     await batch.commit();
 
+    // Notify all members their bill is ready
+    if (billCount > 0) {
+      notificationService.notifyAllMembers(
+        societyId: societyId,
+        title: '🧾 Maintenance Bill Generated',
+        body:  'Your maintenance bill for '
+               '$month is ready. '
+               'Please pay before the due date.',
+        type:  'billGenerated',
+      ).catchError((_) {});
+    }
+
     return {
       'month':    month,
       'count':    billCount,
@@ -217,7 +230,142 @@ class BillingRepository {
               a.generatedAt)));
   }
 
-  // ── Mark payment as paid ───────────────────────────
+  // ── Remind ALL residents with outstanding dues ──────
+  // Across every month (not just one). Groups unpaid +
+  // reported bills per resident and sends each a single
+  // reminder with their total outstanding.
+  Future<int> remindAllDefaulters({
+    required String societyId,
+    required String adminId,
+  }) async {
+    final snap = await _db
+        .collection('societies')
+        .doc(societyId)
+        .collection('bills')
+        .where('status',
+        whereIn: ['unpaid', 'reported'])
+        .get();
+
+    // Group by billing-responsible resident
+    final byUser = <String, _Outstanding>{};
+    for (final d in snap.docs) {
+      final data = d.data();
+      final uid  =
+          data['billingResponsibleId'] as String?;
+      if (uid == null) continue;
+      final amt = (data['totalAmount'] as num? ?? 0)
+          .toDouble();
+      final flat =
+          data['flatNumber'] as String? ?? '';
+      final agg = byUser.putIfAbsent(
+          uid, () => _Outstanding(flat));
+      agg.total += amt;
+      agg.count += 1;
+    }
+
+    if (byUser.isEmpty) return 0;
+
+    final batch = _db.batch();
+    byUser.forEach((uid, o) {
+      final ref = _db
+          .collection('users')
+          .doc(uid)
+          .collection('notifications')
+          .doc();
+      batch.set(ref, {
+        'title': '🔔 Maintenance Dues Pending',
+        'body':
+        'You have ₹${o.total.toStringAsFixed(0)} '
+            'outstanding across ${o.count} bill(s) '
+            'for ${o.flat}. Please clear your dues.',
+        'type':      'duesReminder',
+        'isRead':    false,
+        'createdAt': Timestamp.now(),
+      });
+    });
+    await batch.commit();
+
+    return byUser.length;
+  }
+
+  // ── Resident reports a payment (awaiting admin) ─────
+  Future<void> reportPayment({
+    required String societyId,
+    required String billId,
+    required String userId,
+    String? proof,
+  }) async {
+    final billRef = _db
+        .collection('societies')
+        .doc(societyId)
+        .collection('bills')
+        .doc(billId);
+
+    final snap = await billRef.get();
+    final data = snap.data() as Map<String, dynamic>?;
+
+    await billRef.update({
+      'status':       'reported',
+      'paymentProof': proof ?? '',
+      'reportedAt':   Timestamp.now(),
+      'reportedBy':   userId,
+    });
+
+    // Notify admin a payment was reported
+    final flatNumber =
+        data?['flatNumber'] as String? ?? '';
+    final amount =
+        (data?['totalAmount'] as num?)
+            ?.toStringAsFixed(0) ?? '';
+    final month =
+        data?['month'] as String? ?? '';
+
+    notificationService.notifyAdmin(
+      societyId: societyId,
+      title: '💰 Payment Reported',
+      body:  'Flat $flatNumber reported a '
+             '₹$amount payment for $month. '
+             'Please verify and confirm.',
+      type:  'paymentReported',
+    ).catchError((_) {});
+  }
+
+  // ── Admin rejects a reported payment ────────────────
+  Future<void> rejectPaymentReport({
+    required String societyId,
+    required String billId,
+  }) async {
+    final billRef = _db
+        .collection('societies')
+        .doc(societyId)
+        .collection('bills')
+        .doc(billId);
+    final snap = await billRef.get();
+    final data = snap.data() as Map<String, dynamic>?;
+
+    await billRef.update({
+      'status':       'unpaid',
+      'paymentProof': null,
+      'reportedAt':   null,
+      'reportedBy':   null,
+    });
+
+    final responsibleId =
+        data?['billingResponsibleId'] as String?;
+    final month = data?['month'] as String? ?? '';
+    if (responsibleId != null) {
+      notificationService.notifyUser(
+        userId: responsibleId,
+        title:  '⚠️ Payment Not Confirmed',
+        body:   'Your reported payment for $month '
+                'could not be verified. Please '
+                'check with your admin.',
+        type:   'paymentRejected',
+      ).catchError((_) {});
+    }
+  }
+
+  // ── Mark payment as paid (admin confirms) ───────────
   Future<void> markAsPaid({
     required String societyId,
     required String billId,
@@ -230,6 +378,10 @@ class BillingRepository {
         .collection('bills')
         .doc(billId);
 
+    // Read bill before updating to get billing responsible
+    final billSnap = await billRef.get();
+    final billData = billSnap.data() as Map<String, dynamic>?;
+
     batch.update(billRef, {
       'status':   'paid',
       'paidAt':   Timestamp.now(),
@@ -237,6 +389,28 @@ class BillingRepository {
     });
 
     await batch.commit();
+
+    // Notify the payer their payment is confirmed
+    final responsibleId =
+        billData?['billingResponsibleId'] as String?;
+    final flatNumber =
+        billData?['flatNumber'] as String? ?? '';
+    final amount =
+        (billData?['totalAmount'] as num?)
+            ?.toStringAsFixed(0) ?? '';
+    final month =
+        billData?['month'] as String? ?? '';
+
+    if (responsibleId != null) {
+      notificationService.notifyUser(
+        userId: responsibleId,
+        title:  '✅ Payment Confirmed',
+        body:   'Your maintenance payment of '
+                '₹$amount for $flatNumber '
+                '($month) has been marked as paid.',
+        type:   'paymentConfirmed',
+      ).catchError((_) {});
+    }
   }
 
   // ── Undo payment ───────────────────────────────────
@@ -284,4 +458,11 @@ class BillingRepository {
               (s, b) => s + b.totalAmount),
     };
   }
+}
+// Internal helper for grouping a resident's outstanding dues.
+class _Outstanding {
+  final String flat;
+  double total = 0;
+  int count = 0;
+  _Outstanding(this.flat);
 }

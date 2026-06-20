@@ -1,11 +1,11 @@
 {
-    "name": "societypay",
-    "short_name": "societypay",
+    "name": "SocietyPay",
+    "short_name": "SocietyPay",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#1A3A6B",
+    "theme_color": "#1A3A6B",
+    "description": "Smart apartment society management — maintenance, expenses, voting and more.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

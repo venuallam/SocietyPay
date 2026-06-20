@@ -1,8 +1,19 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     id("dev.flutter.flutter-gradle-plugin")
     id("com.google.gms.google-services")
 
+}
+
+// Load release signing config from android/key.properties
+// (this file is git-ignored and created by you locally).
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
 android {
@@ -19,14 +30,31 @@ android {
         applicationId = "com.venuallam.societypay"
         minSdk = flutter.minSdkVersion
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
         multiDexEnabled = true
     }
 
+signingConfigs {
+    create("release") {
+        if (keystorePropertiesFile.exists()) {
+            keyAlias = keystoreProperties["keyAlias"] as String
+            keyPassword = keystoreProperties["keyPassword"] as String
+            storeFile = file(keystoreProperties["storeFile"] as String)
+            storePassword = keystoreProperties["storePassword"] as String
+        }
+    }
+}
+
 buildTypes {
     release {
-        signingConfig = signingConfigs.getByName("debug")
+        // Use the real release key when key.properties exists,
+        // otherwise fall back to debug so the project still
+        // builds for anyone without the keystore.
+        signingConfig = if (keystorePropertiesFile.exists())
+            signingConfigs.getByName("release")
+        else
+            signingConfigs.getByName("debug")
         isMinifyEnabled = false
         isShrinkResources = false
     }
@@ -40,6 +68,7 @@ buildTypes {
 dependencies {
     implementation(platform("com.google.firebase:firebase-bom:33.9.0"))
     implementation("com.google.firebase:firebase-analytics")
+    implementation("androidx.browser:browser:1.3.0")
 }
 
 kotlin {

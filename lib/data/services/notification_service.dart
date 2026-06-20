@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class NotificationService {
   final _db  = FirebaseFirestore.instance;
@@ -44,6 +45,16 @@ class NotificationService {
     required String userId,
     required String societyId,
   }) async {
+    // Web residents use WhatsApp/SMS — no FCM token
+    if (kIsWeb) {
+      await _db.collection('users').doc(userId)
+          .update({
+        'platform':  'web',
+        'updatedAt': Timestamp.now(),
+      });
+      return;
+    }
+
     final token = await _fcm.getToken();
     if (token == null) return;
     _currentToken = token;
@@ -254,6 +265,78 @@ class NotificationService {
     for (final doc in snap.docs) {
       batch.update(doc.reference,
           {'isRead': true});
+    }
+    await batch.commit();
+  }
+
+  // ── Core: write one notification doc ────────────
+  // Cloud Function picks it up and sends FCM push.
+  Future<void> notifyUser({
+    required String userId,
+    required String title,
+    required String body,
+    required String type,
+  }) async {
+    await _db
+        .collection('users')
+        .doc(userId)
+        .collection('notifications')
+        .add({
+      'title':     title,
+      'body':      body,
+      'type':      type,
+      'isRead':    false,
+      'createdAt': Timestamp.now(),
+    });
+  }
+
+  // ── Notify the admin of a society ────────────────
+  Future<void> notifyAdmin({
+    required String societyId,
+    required String title,
+    required String body,
+    required String type,
+  }) async {
+    final doc = await _db
+        .collection('societies')
+        .doc(societyId)
+        .get();
+    final adminId =
+        doc.data()?['adminId'] as String?;
+    if (adminId == null) return;
+    await notifyUser(
+        userId: adminId,
+        title:  title,
+        body:   body,
+        type:   type);
+  }
+
+  // ── Notify all members of a society ──────────────
+  Future<void> notifyAllMembers({
+    required String societyId,
+    required String title,
+    required String body,
+    required String type,
+  }) async {
+    final users = await _db
+        .collection('users')
+        .where('societyId', isEqualTo: societyId)
+        .get();
+
+    final batch = _db.batch();
+    for (final u in users.docs) {
+      final ref = _db
+          .collection('users')
+          .doc(u.id)
+          .collection('notifications')
+          .doc();
+      batch.set(ref, {
+        'title':     title,
+        'body':      body,
+        'type':      type,
+        'isRead':    false,
+        'createdAt': Timestamp.now(),
+      });
     }
     await batch.commit();
   }

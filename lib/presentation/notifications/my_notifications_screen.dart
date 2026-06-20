@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
 import '../../core/constants/app_constants.dart';
 import '../../data/services/notification_service.dart';
+import '../../core/ads/banner_ad_widget.dart';
 
 class MyNotificationsScreen extends StatelessWidget {
   const MyNotificationsScreen({super.key});
@@ -18,6 +19,7 @@ class MyNotificationsScreen extends StatelessWidget {
     }
 
     return Scaffold(
+      bottomNavigationBar: const BannerAdWidget(),
       appBar: AppBar(
         title: const Text('My Notifications'),
         backgroundColor: AppColors.primary,

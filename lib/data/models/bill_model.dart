@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum PaymentStatus { paid, unpaid }
+// unpaid → reported (resident claims paid, awaiting admin)
+//        → paid (admin confirmed)
+enum PaymentStatus { paid, unpaid, reported }
 
 class BillModel {
   final String id;
@@ -19,6 +21,10 @@ class BillModel {
   final DateTime generatedAt;
   final DateTime? paidAt;
   final String? markedBy;
+  // Payment-report fields (resident-submitted proof)
+  final String? paymentProof;   // link / UTR / reference
+  final DateTime? reportedAt;
+  final String? reportedBy;
 
   const BillModel({
     required this.id,
@@ -37,6 +43,9 @@ class BillModel {
     required this.generatedAt,
     this.paidAt,
     this.markedBy,
+    this.paymentProof,
+    this.reportedAt,
+    this.reportedBy,
   });
 
   factory BillModel.fromDoc(DocumentSnapshot doc) {
@@ -56,9 +65,11 @@ class BillModel {
           .toDouble(),
       totalAmount:
       (d['totalAmount'] as num).toDouble(),
-      status: d['status'] == 'paid'
-          ? PaymentStatus.paid
-          : PaymentStatus.unpaid,
+      status: switch (d['status']) {
+        'paid'     => PaymentStatus.paid,
+        'reported' => PaymentStatus.reported,
+        _          => PaymentStatus.unpaid,
+      },
       billingResponsibleId:
       d['billingResponsibleId'] ?? '',
       billingResponsibleName:
@@ -70,6 +81,11 @@ class BillModel {
           ? (d['paidAt'] as Timestamp).toDate()
           : null,
       markedBy: d['markedBy'],
+      paymentProof: d['paymentProof'],
+      reportedAt: d['reportedAt'] != null
+          ? (d['reportedAt'] as Timestamp).toDate()
+          : null,
+      reportedBy: d['reportedBy'],
     );
   }
 
@@ -91,8 +107,13 @@ class BillModel {
     'paidAt': paidAt != null
         ? Timestamp.fromDate(paidAt!) : null,
     'markedBy': markedBy,
+    'paymentProof': paymentProof,
+    'reportedAt': reportedAt != null
+        ? Timestamp.fromDate(reportedAt!) : null,
+    'reportedBy': reportedBy,
   };
 
-  bool get isPaid   => status == PaymentStatus.paid;
-  bool get isUnpaid => status == PaymentStatus.unpaid;
+  bool get isPaid     => status == PaymentStatus.paid;
+  bool get isUnpaid   => status == PaymentStatus.unpaid;
+  bool get isReported => status == PaymentStatus.reported;
 }

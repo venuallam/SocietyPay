@@ -155,6 +155,7 @@ class _RequestCardState extends State<_RequestCard> {
         userId:    widget.request.userId,
         flatId:    widget.request.flatId,
         role:      widget.request.role,
+        userName:  widget.request.userName,
       );
 
       if (mounted) {
